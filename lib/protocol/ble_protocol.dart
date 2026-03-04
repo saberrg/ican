@@ -69,10 +69,7 @@ enum ObstacleSide {
   final int code;
 
   static ObstacleSide fromCode(int code) {
-    return ObstacleSide.values.firstWhere(
-      (s) => s.code == code,
-      orElse: () => ObstacleSide.none,
-    );
+    return ObstacleSide.values.firstWhere((s) => s.code == code, orElse: () => ObstacleSide.none);
   }
 }
 
@@ -81,11 +78,7 @@ enum ObstacleSide {
 // ===========================================================================
 
 class TelemetryPacket {
-  final bool fallDetected;
-  final bool pulseValid;
-  final int pulseBpm;
-  final int batteryPercent;
-  final int yawAngleTenths; // degrees * 10
+  // degrees * 10
 
   const TelemetryPacket({
     required this.fallDetected,
@@ -110,6 +103,11 @@ class TelemetryPacket {
       yawAngleTenths: byteData.getInt16(3, Endian.little),
     );
   }
+  final bool fallDetected;
+  final bool pulseValid;
+  final int pulseBpm;
+  final int batteryPercent;
+  final int yawAngleTenths;
 
   /// Encode to 6 bytes (useful for testing / simulation).
   Uint8List toBytes() {
@@ -137,13 +135,6 @@ class TelemetryPacket {
 // ===========================================================================
 
 class ImagePacketHeader {
-  static const int headerSize = 5;
-  static const int maxPayload = 235;
-
-  final int sequenceNumber;
-  final int totalChunks;
-  final int checksum;
-
   const ImagePacketHeader({
     required this.sequenceNumber,
     required this.totalChunks,
@@ -161,6 +152,12 @@ class ImagePacketHeader {
       checksum: data[4],
     );
   }
+  static const int headerSize = 5;
+  static const int maxPayload = 235;
+
+  final int sequenceNumber;
+  final int totalChunks;
+  final int checksum;
 
   /// Compute XOR checksum over [payload] bytes.
   static int computeChecksum(Uint8List payload) {
