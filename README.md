@@ -52,3 +52,15 @@ This page is essentially the app startup, where there is a voice command process
 
 ## Testing and Validation
 - Plan for both lab testing and real-world testing with visually impaired users to gather feedback and make necessary adjustments.
+
+## Directory Structure
+This project is structured as a monorepo, containing both the mobile app and documentation for the iCan device. Here is a guide to the key directories and files:
+
+- `lib/`: Contains the main Dart/Flutter source code for the mobile application. This is where most of the app logic resides.
+- `android/` & `ios/`: Platform-specific build files and configurations for the app.
+- `test/`: Contains testing suites to ensure the app functions correctly.
+- `assets/`: (To be added) Will contain images, sounds, or other static resources used by the app.
+- `firmware/` or `cpp/`: (To be added) Will contain the C++/Arduino source code for the iCan device hardware.
+- `iCan.md`: In-depth documentation detailing the hardware specifications and purpose of the physical iCan device.
+- `development_plan.md`: Tracks the phases of development, milestones, and upcoming tasks.
+- `pubspec.yaml` / `pubspec.lock`: Flutter project metadata and dependencies.
