@@ -105,3 +105,6 @@ ios/Runner/EyePipeline/Models/
 
 # Moondream CoreML conversion virtual environment
 .venv-moondream/
+
+# Local presentation dependencies
+presentations/final/node_modules/
