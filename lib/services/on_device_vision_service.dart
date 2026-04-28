@@ -239,7 +239,7 @@ class ScenePerceptionResult extends VisionAnalysis {
 // Model status
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Status of the on-device VLM (SmolVLM) model.
+/// Status of the on-device VLM (SmolVLM2) model.
 enum ModelStatus {
   notAvailable,
   notDownloaded,
@@ -284,7 +284,7 @@ class OfflineVisionStatus {
 
   String get bestLocalBackendLabel {
     if (foundationModelsAvailable) return 'Foundation Models';
-    if (modelStatus == ModelStatus.loaded) return 'SmolVLM';
+    if (modelStatus == ModelStatus.loaded) return 'SmolVLM2';
     if (hasSpatialPerception) return 'Core ML spatial perception';
     return 'Local basic vision';
   }
@@ -296,11 +296,11 @@ class OfflineVisionStatus {
     }
     switch (modelStatus) {
       case ModelStatus.notAvailable:
-        missing.add('SmolVLM unavailable');
+        missing.add('SmolVLM2 unavailable');
       case ModelStatus.notDownloaded:
-        missing.add('SmolVLM model not downloaded');
+        missing.add('SmolVLM2 model not downloaded');
       case ModelStatus.downloading:
-        missing.add('SmolVLM model still downloading');
+        missing.add('SmolVLM2 model still downloading');
       case ModelStatus.ready:
       case ModelStatus.loaded:
         break;
@@ -433,7 +433,7 @@ class SmolVlmModelInfo {
       sizeBytes: _asInt(map['sizeBytes']),
       requiredBytes: _asInt(map['requiredBytes']),
       path: map['path']?.toString() ?? '',
-      modelName: map['modelName']?.toString() ?? 'SmolVLM',
+      modelName: map['modelName']?.toString() ?? 'SmolVLM2',
       files: files,
     );
   }
@@ -749,7 +749,7 @@ class OnDeviceVisionService {
     );
   }
 
-  // ── Layer 2: SmolVLM ────────────────────────────────────────────────────
+  // ── Layer 2: SmolVLM2 ───────────────────────────────────────────────────
 
   Future<ModelStatus> getModelStatus() async {
     try {
@@ -793,7 +793,7 @@ class OnDeviceVisionService {
         'visionContext': visionContext,
       },
       localCode: 'Local L20',
-      stageLabel: 'SmolVLM',
+      stageLabel: 'SmolVLM2',
     );
   }
 
@@ -868,7 +868,7 @@ class OnDeviceVisionService {
         sizeBytes: 0,
         requiredBytes: 0,
         path: '',
-        modelName: 'SmolVLM',
+        modelName: 'SmolVLM2',
         files: [],
       );
     }

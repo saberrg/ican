@@ -118,7 +118,7 @@ struct PerceptionResult {
     // MARK: - Template Fallback
 
     /// Assemble a spoken description from Layer 1 data alone (no VLM required).
-    /// Used as the final fallback when neither Foundation Models nor SmolVLM is available.
+    /// Used as the final fallback when neither Foundation Models nor SmolVLM2 is available.
     func toTemplateDescription() -> String {
         var sentences: [String] = []
 

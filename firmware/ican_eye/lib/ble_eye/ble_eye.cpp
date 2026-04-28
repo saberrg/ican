@@ -60,15 +60,19 @@ class EyeServerCallbacks : public BLEServerCallbacks {
     s_negotiatedMtu = 23;  // Reset to safe default; updated by onMtuChanged
     Serial.println("[BLE] Client connected. MTU reset to default.");
 
-    // Request fast connection interval: 15-30ms (same as Cane firmware).
-    // iOS accepts >=15ms minimum. Without this, iOS may choose 30ms+.
-    pServer->updateConnParams(param->connect.remote_bda, 12, 24, 0, 200);
+    // Request an iOS-friendly interval: 30-50ms with a longer supervision
+    // timeout. This is less aggressive than the earlier 15-30ms request and
+    // avoids random CoreBluetooth disconnects during image transfer.
+    pServer->updateConnParams(param->connect.remote_bda, 24, 40, 0, 400);
   }
 
   void onDisconnect(BLEServer *server) override {
     clientConnected = false;
     s_congested = false;
-    Serial.println("[BLE] Client disconnected. Restarting advertising.");
+    s_connId = 0;
+    s_gattsIf = 0;
+    Serial.println("[BLE] Client disconnected. Restarting advertising shortly.");
+    delay(250);
     BLEDevice::startAdvertising();
   }
 
@@ -97,6 +101,15 @@ static void eyeGattsEventHandler(esp_gatts_cb_event_t event,
       s_connId = param->connect.conn_id;
       Serial.printf("[BLE] GATTS connect: gatts_if=%u conn_id=%u\n",
                     gatts_if, param->connect.conn_id);
+      break;
+
+    case ESP_GATTS_DISCONNECT_EVT:
+      Serial.printf("[BLE] GATTS disconnect: gatts_if=%u conn_id=%u reason=0x%02X\n",
+                    gatts_if, param->disconnect.conn_id,
+                    param->disconnect.reason);
+      s_connId = 0;
+      s_gattsIf = 0;
+      s_congested = false;
       break;
 
     case ESP_GATTS_CONGEST_EVT:
@@ -196,7 +209,9 @@ void initBleEye() {
   // Capture Control characteristic — client writes commands, server notifies status
   pCaptureChar = pService->createCharacteristic(
       CHAR_EYE_CAPTURE_RX_UUID,
-      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+      BLECharacteristic::PROPERTY_WRITE |
+          BLECharacteristic::PROPERTY_WRITE_NR |
+          BLECharacteristic::PROPERTY_NOTIFY);
   pCaptureChar->setCallbacks(new CaptureCommandCallback());
   pCaptureChar->addDescriptor(new BLE2902());
 

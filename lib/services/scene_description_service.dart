@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log_service.dart';
 import 'connectivity_service.dart';
 import 'on_device_vision_service.dart';
 import 'vertex_ai_service.dart';
@@ -25,7 +26,7 @@ enum VisionMode {
 enum VisionBackend {
   cloud,
   foundationModels, // Apple Foundation Models (iOS 26+)
-  vlm, // SmolVLM-500M via llama.cpp mtmd
+  vlm, // SmolVLM2-500M via llama.cpp mtmd
   visionOnly, // Layer 1 template only
 }
 
@@ -276,18 +277,20 @@ class SceneDescriptionService extends ChangeNotifier {
   }) async* {
     final status = await onDeviceService.getModelStatus();
     if (status == ModelStatus.notAvailable) {
-      throw StateError('SmolVLM runtime is not linked into this build.');
+      throw StateError('SmolVLM2 runtime is not linked into this build.');
     }
     if (status == ModelStatus.notDownloaded) {
-      throw StateError('SmolVLM model files are not downloaded.');
+      throw StateError('SmolVLM2 model files are not downloaded.');
     }
     if (status == ModelStatus.downloading) {
-      throw StateError('SmolVLM model download is still in progress.');
+      throw StateError('SmolVLM2 model download is still in progress.');
     }
     if (status == ModelStatus.ready) {
       final loaded = await onDeviceService.loadVlmModel();
       if (!loaded) {
-        throw StateError('SmolVLM model files are present but failed to load.');
+        throw StateError(
+          'SmolVLM2 model files are present but failed to load.',
+        );
       }
     }
     yield* _describeWithVlm(
@@ -462,7 +465,15 @@ class SceneDescriptionService extends ChangeNotifier {
           maxOutputTokens: maxOutputTokens,
         )
         .toList();
-    return _CloudPass(chunks.join().trim(), cloudService.lastFinishReason);
+    final pass = _CloudPass(
+      chunks.join().trim(),
+      cloudService.lastFinishReason,
+    );
+    _recordCloudLog(
+      'Gemini pass finishReason=${pass.finishReason ?? "none"} '
+      'tokens=$maxOutputTokens textChars=${pass.text.length}',
+    );
+    return pass;
   }
 
   Future<_CloudDescriptionResult> _finishCloudText(
@@ -477,6 +488,10 @@ class SceneDescriptionService extends ChangeNotifier {
         firstFinishReason == 'MAX_TOKENS' ||
         _hasIncompleteFinalSentence(firstText);
     if (!needsContinuation) {
+      _recordCloudLog(
+        'Gemini final rescue=not-needed truncated=false '
+        'finishReason=${firstFinishReason ?? "none"}',
+      );
       return _CloudDescriptionResult(
         firstText,
         SceneCompletionMetadata(
@@ -491,19 +506,35 @@ class SceneDescriptionService extends ChangeNotifier {
     }
 
     try {
+      _recordCloudLog(
+        'Gemini retry requested. firstFinishReason=${firstFinishReason ?? "none"} '
+        'firstChars=${firstText.length}',
+      );
       final continuation = await _collectCloudPass(
         imageBytes,
         systemPrompt: systemPrompt,
         userPrompt: _continuationPrompt(firstText, originalUserPrompt),
-        maxOutputTokens: 220,
+        maxOutputTokens: 384,
       );
       final combined = _joinContinuation(firstText, continuation.text);
       final stillTruncated =
           continuation.finishReason == 'MAX_TOKENS' ||
           _hasIncompleteFinalSentence(combined);
-      final text = stillTruncated ? _cutOffMessage(combined) : combined;
+      final rescued = stillTruncated
+          ? _rescueTruncatedCloudText(combined)
+          : _CloudRescueResult(combined, 'complete');
+      _recordCloudLog(
+        'Gemini rescue=${rescued.strategy} truncated=$stillTruncated '
+        'finishReason=${continuation.finishReason ?? firstFinishReason ?? "none"} '
+        'textChars=${rescued.text.length}',
+      );
+      if (rescued.text.isEmpty) {
+        throw CloudVisionException.malformedResponse(
+          'Gemini stopped before a useful spoken sentence was available.',
+        );
+      }
       return _CloudDescriptionResult(
-        text,
+        rescued.text,
         SceneCompletionMetadata(
           finishReason: continuation.finishReason ?? firstFinishReason,
           wasTruncated: stillTruncated,
@@ -514,8 +545,18 @@ class SceneDescriptionService extends ChangeNotifier {
         ),
       );
     } on CloudVisionException {
+      final rescued = _rescueTruncatedCloudText(firstText);
+      _recordCloudLog(
+        'Gemini continuation failed. rescue=${rescued.strategy} '
+        'textChars=${rescued.text.length}',
+      );
+      if (rescued.text.isEmpty) {
+        throw CloudVisionException.malformedResponse(
+          'Gemini continuation failed before useful spoken text was available.',
+        );
+      }
       return _CloudDescriptionResult(
-        _cutOffMessage(firstText),
+        rescued.text,
         SceneCompletionMetadata(
           finishReason: firstFinishReason,
           wasTruncated: true,
@@ -529,7 +570,7 @@ class SceneDescriptionService extends ChangeNotifier {
   static String _continuationPrompt(String partialText, String originalPrompt) {
     return [
       originalPrompt,
-      'The previous response was cut off. Continue from this partial spoken description and finish in plain speech. Do not repeat completed sentences.',
+      'The previous response may be cut off. Finish as 1-2 complete spoken sentences in plain speech. Do not repeat completed sentences, and do not mention that anything was cut off.',
       'Partial description: "$partialText"',
     ].join('\n\n');
   }
@@ -548,12 +589,17 @@ class SceneDescriptionService extends ChangeNotifier {
     return '$a $b'.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  static String _cutOffMessage(String text) {
+  static _CloudRescueResult _rescueTruncatedCloudText(String text) {
     final complete = _completeSentencePrefix(text);
     if (complete.isEmpty) {
-      return 'The description was cut off before a complete sentence was available.';
+      final partial = _cleanUsefulPartial(text);
+      if (partial.isEmpty) return const _CloudRescueResult('', 'empty');
+      return _CloudRescueResult(
+        _ensureSentencePunctuation(partial),
+        'punctuated-partial',
+      );
     }
-    return '$complete The description was cut off.';
+    return _CloudRescueResult(complete, 'complete-prefix');
   }
 
   static String _completeSentencePrefix(String text) {
@@ -561,6 +607,29 @@ class SceneDescriptionService extends ChangeNotifier {
     final matches = RegExp(r'''[.!?]["')\]]*(?=\s|$)''').allMatches(trimmed);
     if (matches.isEmpty) return '';
     return trimmed.substring(0, matches.last.end).trim();
+  }
+
+  static String _cleanUsefulPartial(String text) {
+    final trimmed = text
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll(RegExp(r'["“”]+$'), '')
+        .trim();
+    if (trimmed.isEmpty) return '';
+    if (!RegExp(r'[A-Za-z0-9]').hasMatch(trimmed)) return '';
+    final words = RegExp(r"[A-Za-z0-9']+").allMatches(trimmed).length;
+    if (words < 3) return '';
+    return trimmed;
+  }
+
+  static String _ensureSentencePunctuation(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return '';
+    if (RegExp(r'''[.!?]["')\]]*$''').hasMatch(trimmed)) return trimmed;
+    return '$trimmed.';
+  }
+
+  static void _recordCloudLog(String message) {
+    unawaited(AppLogService.instance.record(message, source: 'describe'));
   }
 
   /// Foundation Models path: Layer 1 perception -> Apple LLM synthesis.
@@ -592,7 +661,7 @@ class SceneDescriptionService extends ChangeNotifier {
     }
   }
 
-  /// VLM path: Layer 1 perception context fed into SmolVLM.
+  /// VLM path: Layer 1 perception context fed into SmolVLM2.
   Stream<String> _describeWithVlm(
     Uint8List imageBytes, {
     required String systemPrompt,
@@ -625,7 +694,7 @@ class SceneDescriptionService extends ChangeNotifier {
       if (!allowTemplateFallback) {
         throw const LocalVisionException(
           'Local L20',
-          'SmolVLM produced no output.',
+          'SmolVLM2 produced no output.',
         );
       }
       debugPrint('[SceneDescription] VLM produced no output; using template');
@@ -635,8 +704,39 @@ class SceneDescriptionService extends ChangeNotifier {
 
   /// Vision-only path: Layer 1 template, no VLM needed.
   Stream<String> _describeWithVisionOnly(Uint8List imageBytes) async* {
-    final perception = await onDeviceService.analyzeScene(imageBytes);
-    yield perception.toTemplateDescription();
+    final analysis = await onDeviceService.analyzeWithVision(imageBytes);
+    yield analysis.toTemplateDescription();
+  }
+}
+
+extension VisionAnalysisTemplate on VisionAnalysis {
+  /// Assemble a spoken description from Apple Vision data alone.
+  String toTemplateDescription() {
+    final sentences = <String>[];
+
+    if (sceneClassification != 'unknown' && sceneConfidence > 0.15) {
+      final label = sceneClassification.replaceAll('_', ' ');
+      sentences.add('You appear to be in a $label setting.');
+    } else {
+      sentences.add('The scene could not be clearly identified.');
+    }
+
+    if (personCount > 0) {
+      final noun = personCount == 1 ? '1 person is' : '$personCount people are';
+      sentences.add(
+        '${noun[0].toUpperCase()}${noun.substring(1)} detected nearby.',
+      );
+    }
+
+    if (ocrTexts.isNotEmpty) {
+      if (ocrTexts.length == 1) {
+        sentences.add('Text reads: ${ocrTexts.first}.');
+      } else {
+        sentences.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
+      }
+    }
+
+    return sentences.join(' ');
   }
 }
 
@@ -700,4 +800,11 @@ class _CloudDescriptionResult {
 
   final String text;
   final SceneCompletionMetadata metadata;
+}
+
+class _CloudRescueResult {
+  const _CloudRescueResult(this.text, this.strategy);
+
+  final String text;
+  final String strategy;
 }

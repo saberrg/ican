@@ -34,6 +34,8 @@ void main() {
         expect(service.lastBackend, VisionBackend.visionOnly);
         expect(chunks.join(), contains('hallway setting'));
         expect(onDevice.loadVlmCalls, 0);
+        expect(onDevice.analyzeWithVisionCalls, 1);
+        expect(onDevice.analyzeSceneCalls, 0);
       },
     );
 
@@ -54,7 +56,7 @@ void main() {
     );
 
     test(
-      'uses SmolVLM only when ready model files load successfully',
+      'uses SmolVLM2 only when ready model files load successfully',
       () async {
         onDevice.modelStatus = ModelStatus.ready;
         onDevice.loadVlmResult = true;
@@ -65,13 +67,13 @@ void main() {
             .toList();
 
         expect(service.lastBackend, VisionBackend.vlm);
-        expect(chunks, ['SmolVLM description.']);
+        expect(chunks, ['SmolVLM2 description.']);
         expect(onDevice.loadVlmCalls, 1);
       },
     );
 
     test(
-      'does not select SmolVLM when loading the ready model fails',
+      'does not select SmolVLM2 when loading the ready model fails',
       () async {
         onDevice.modelStatus = ModelStatus.ready;
         onDevice.loadVlmResult = false;
@@ -88,7 +90,7 @@ void main() {
     );
 
     test(
-      'direct SmolVLM diagnostic reports missing downloaded model',
+      'direct SmolVLM2 diagnostic reports missing downloaded model',
       () async {
         onDevice.modelStatus = ModelStatus.notDownloaded;
 
@@ -102,7 +104,7 @@ void main() {
     );
 
     test(
-      'direct SmolVLM diagnostic reports no tokens without template fallback',
+      'direct SmolVLM2 diagnostic reports no tokens without template fallback',
       () async {
         onDevice.modelStatus = ModelStatus.loaded;
         onDevice.vlmProducesOutput = false;
@@ -150,7 +152,8 @@ void main() {
       expect(service.lastCloudFailure, isA<CloudVisionException>());
       expect(service.lastBackend, VisionBackend.visionOnly);
       expect(chunks.join(), contains('hallway setting'));
-      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 1);
+      expect(onDevice.analyzeSceneCalls, 0);
     });
 
     test(
@@ -221,11 +224,11 @@ void main() {
       },
     );
 
-    test('Gemini still cut off drops incomplete final sentence', () async {
+    test('Gemini MAX_TOKENS with no punctuation never says cut off', () async {
       await service.setMode(VisionMode.cloudOnly);
       cloud.responseChunks = [
-        ['A hallway has a clear path ahead. A sign says'],
-        [' EXIT'],
+        ['A hallway has a clear path ahead with an exit sign'],
+        [' and a chair directly ahead'],
       ];
       cloud.finishReasons = ['MAX_TOKENS', 'MAX_TOKENS'];
 
@@ -235,9 +238,52 @@ void main() {
 
       expect(
         chunks.single,
-        'A hallway has a clear path ahead. The description was cut off.',
+        'A hallway has a clear path ahead with an exit sign and a chair directly ahead.',
       );
+      expect(chunks.single, isNot(contains('cut off')));
       expect(service.lastCompletionMetadata.wasTruncated, isTrue);
+    });
+
+    test(
+      'Gemini partial complete sentence returns complete prefix only',
+      () async {
+        await service.setMode(VisionMode.cloudOnly);
+        cloud.responseChunks = [
+          ['A hallway has a clear path ahead. A sign says'],
+          [' EXIT'],
+        ];
+        cloud.finishReasons = ['MAX_TOKENS', 'MAX_TOKENS'];
+
+        final chunks = await service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList();
+
+        expect(chunks.single, 'A hallway has a clear path ahead.');
+        expect(chunks.single, isNot(contains('cut off')));
+        expect(service.lastCompletionMetadata.wasTruncated, isTrue);
+      },
+    );
+
+    test('Gemini empty truncated output reports cloud diagnostic', () async {
+      await service.setMode(VisionMode.cloudOnly);
+      cloud.responseChunks = [
+        [''],
+        [''],
+      ];
+      cloud.finishReasons = ['MAX_TOKENS', 'MAX_TOKENS'];
+
+      await expectLater(
+        service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList(),
+        throwsA(
+          isA<CloudVisionException>().having(
+            (e) => e.kind,
+            'kind',
+            CloudVisionFailureKind.malformedResponse,
+          ),
+        ),
+      );
     });
   });
 }
@@ -252,6 +298,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool appleVisionReady = false;
   bool vlmProducesOutput = true;
   int loadVlmCalls = 0;
+  int analyzeWithVisionCalls = 0;
   int analyzeSceneCalls = 0;
 
   @override
@@ -296,6 +343,18 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   }
 
   @override
+  Future<VisionAnalysis> analyzeWithVision(Uint8List jpegBytes) async {
+    analyzeWithVisionCalls++;
+    return const VisionAnalysis(
+      ocrTexts: ['EXIT'],
+      sceneClassification: 'hallway',
+      sceneConfidence: 0.91,
+      personCount: 1,
+      personRects: [],
+    );
+  }
+
+  @override
   Stream<String> synthesizeWithFoundationModels(
     String context, {
     required String systemPrompt,
@@ -310,7 +369,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
     String? visionContext,
   }) async* {
     if (!vlmProducesOutput) return;
-    yield 'SmolVLM description.';
+    yield 'SmolVLM2 description.';
   }
 }
 
