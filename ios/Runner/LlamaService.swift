@@ -5,7 +5,7 @@ import UIKit
 import llama
 #endif
 
-/// Wraps the llama.cpp mtmd C API for SmolVLM-500M on-device multimodal inference.
+/// Wraps the llama.cpp mtmd C API for SmolVLM2-500M on-device multimodal inference.
 ///
 /// **Setup required before this works:**
 /// 1. Build llama.xcframework: `./scripts/build_llama_ios.sh ~/path/to/llama.cpp`
@@ -16,8 +16,8 @@ final class LlamaService {
 
     static let shared = LlamaService()
 
-    static let textModelFilename       = "SmolVLM-500M-Instruct-Q8_0.gguf"
-    static let visionProjectorFilename = "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf"
+    static let textModelFilename       = "SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+    static let visionProjectorFilename = "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
 
     private var llamaModel: OpaquePointer?
     private var llamaCtx:   OpaquePointer?
@@ -96,7 +96,7 @@ final class LlamaService {
             self.llamaCtx   = ctx
             self.mtmdCtx    = mctx
             self.isLoaded   = true
-            print("[LlamaService] SmolVLM-500M loaded")
+            print("[LlamaService] SmolVLM2-500M loaded")
             return true
         }.value
     }
@@ -135,7 +135,7 @@ final class LlamaService {
               let mctx = mtmdCtx
         else {
             report["stage"] = "load"
-            report["error"] = "SmolVLM did not load. Check linked runtime, file sizes, hashes, memory, and Metal availability."
+            report["error"] = "SmolVLM2 did not load. Check linked runtime, file sizes, hashes, memory, and Metal availability."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
             return report
         }
@@ -264,7 +264,7 @@ final class LlamaService {
         report["outputPreview"] = String(output.prefix(240))
         report["stage"] = outputTokenCount > 0 ? "complete" : "generation"
         if outputTokenCount == 0 {
-            report["error"] = "SmolVLM completed eval but produced no text tokens."
+            report["error"] = "SmolVLM2 completed eval but produced no text tokens."
         }
         report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
         return report
@@ -285,7 +285,7 @@ final class LlamaService {
               let ctx   = llamaCtx,
               let mctx  = mtmdCtx
         else {
-            onError("SmolVLM not loaded — call loadModel() first")
+            onError("SmolVLM2 not loaded — call loadModel() first")
             return
         }
 
@@ -415,8 +415,8 @@ final class LlamaService {
 
     static let shared = LlamaService()
 
-    static let textModelFilename       = "SmolVLM-500M-Instruct-Q8_0.gguf"
-    static let visionProjectorFilename = "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf"
+    static let textModelFilename       = "SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+    static let visionProjectorFilename = "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
 
     private init() {}
 
@@ -434,7 +434,7 @@ final class LlamaService {
     }
 
     func loadModel() async -> Bool {
-        print("[LlamaService] llama.xcframework is not linked; SmolVLM disabled")
+        print("[LlamaService] llama.xcframework is not linked; SmolVLM2 disabled")
         return false
     }
 
@@ -448,7 +448,7 @@ final class LlamaService {
         onComplete: @escaping () -> Void,
         onError: @escaping (String) -> Void
     ) async {
-        onError("SmolVLM is unavailable because llama.xcframework is not linked")
+        onError("SmolVLM2 is unavailable because llama.xcframework is not linked")
     }
 
     func runSelfTest(jpegData: Data, systemPrompt: String) async -> [String: Any] {
@@ -463,7 +463,7 @@ final class LlamaService {
             "textModel": Self.fileReport(filename: Self.textModelFilename),
             "visionProjector": Self.fileReport(filename: Self.visionProjectorFilename),
             "stage": "runtime",
-            "error": "SmolVLM is unavailable because llama.xcframework is not linked",
+            "error": "SmolVLM2 is unavailable because llama.xcframework is not linked",
         ]
     }
 

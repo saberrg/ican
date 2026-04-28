@@ -200,6 +200,7 @@ class EyeEvents {
 
   static const String buttonDouble = 'BUTTON:DOUBLE';
   static const String captureStart = 'CAPTURE:START';
+  static const String profileSetPrefix = 'PROFILE_SET:';
   static const String sizePrefix = 'SIZE:';
   static const String crcPrefix = 'CRC:';
   static const String endPrefix = 'END:';

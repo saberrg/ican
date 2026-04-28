@@ -122,7 +122,7 @@ final class OnDeviceVisionChannel: NSObject {
                 DispatchQueue.main.async { result(true) }
             }
 
-        // ── Layer 2: SmolVLM model lifecycle ─────────────────────────────────
+        // ── Layer 2: SmolVLM2 model lifecycle ────────────────────────────────
         case "getModelStatus":
             if ModelDownloadManager.shared.isDownloading {
                 result("downloading")
@@ -169,7 +169,7 @@ final class OnDeviceVisionChannel: NSObject {
                 DispatchQueue.main.async { result(true) }
             }
 
-        // ── SmolVLM download management ───────────────────────────────────────
+        // ── SmolVLM2 download management ──────────────────────────────────────
         case "downloadModel":
             ModelDownloadManager.shared.startDownload { payload in
                 DispatchQueue.main.async { downloadEventSink?(payload) }

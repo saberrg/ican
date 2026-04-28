@@ -23,6 +23,9 @@ void main() {
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.disconnected,
+      );
       sceneService = _FakeSceneDescriptionService();
       speech = _FakeSpeechOutput();
       viewModel = HomeViewModel(
@@ -37,6 +40,9 @@ void main() {
 
     tearDown(() {
       viewModel.dispose();
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.disconnected,
+      );
     });
 
     test('speaks camera transfer failure when capture times out', () async {
@@ -58,6 +64,23 @@ void main() {
 
       expect(speech.spoken.last, startsWith('Eye E01:'));
       expect(speech.spoken.last, isNot(startsWith('Eye E02:')));
+      expect(viewModel.isProcessing, isFalse);
+    });
+
+    test('rejects Describe while Eye command path is not ready', () async {
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.connected,
+      );
+      BleService.instance.updateEyeReadinessForTesting(
+        BleReadinessPhase.verifyingCommandPath,
+        requiredCharacteristicsReady: true,
+        commandPathReady: false,
+      );
+
+      final result = await viewModel.describeNow();
+
+      expect(result, startsWith('Eye E01:'));
+      expect(sceneService.describeCalls, 0);
       expect(viewModel.isProcessing, isFalse);
     });
 

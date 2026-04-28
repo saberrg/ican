@@ -15,7 +15,7 @@ import '../services/vertex_ai_service.dart';
 enum _DiagBackend {
   cloud('Cloud Gemini'),
   foundationModels('Apple Foundation Models'),
-  smolVLM('SmolVLM llama.cpp'),
+  smolVLM('SmolVLM2 llama.cpp'),
   visionTemplate('Vision-only template');
 
   const _DiagBackend(this.label);
@@ -23,7 +23,18 @@ enum _DiagBackend {
 }
 
 class VisionDiagnosticScreen extends StatefulWidget {
-  const VisionDiagnosticScreen({super.key});
+  const VisionDiagnosticScreen({
+    super.key,
+    this.onDeviceService,
+    this.sceneService,
+    this.initialImageBytes,
+    this.initialImageSource,
+  });
+
+  final OnDeviceVisionService? onDeviceService;
+  final SceneDescriptionService? sceneService;
+  final Uint8List? initialImageBytes;
+  final String? initialImageSource;
 
   @override
   State<VisionDiagnosticScreen> createState() => _VisionDiagnosticScreenState();
@@ -58,12 +69,19 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   @override
   void initState() {
     super.initState();
-    final aiService = VertexAiService()..loadSavedModel();
-    _onDeviceService = OnDeviceVisionService();
-    _sceneService = SceneDescriptionService(
-      cloudService: aiService,
-      onDeviceService: _onDeviceService,
-    )..loadSavedMode();
+    _onDeviceService = widget.onDeviceService ?? OnDeviceVisionService();
+    final injectedSceneService = widget.sceneService;
+    if (injectedSceneService != null) {
+      _sceneService = injectedSceneService;
+    } else {
+      final aiService = VertexAiService()..loadSavedModel();
+      _sceneService = SceneDescriptionService(
+        cloudService: aiService,
+        onDeviceService: _onDeviceService,
+      )..loadSavedMode();
+    }
+    _imageBytes = widget.initialImageBytes;
+    _imageSource = widget.initialImageSource ?? '';
 
     _bleSub = BleService.instance.imageStream.listen((bytes) {
       _lastBleImage = bytes;
@@ -131,7 +149,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
     if (_isLoadingModel) return;
     setState(() {
       _isLoadingModel = true;
-      _modelSetupMessage = 'Loading SmolVLM into memory...';
+      _modelSetupMessage = 'Loading SmolVLM2 into memory...';
     });
 
     final loaded = await _onDeviceService.loadVlmModel();
@@ -141,8 +159,8 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       _isLoadingModel = false;
       _smolVlmStatus = status;
       _modelSetupMessage = loaded
-          ? 'SmolVLM loaded. Pick an image and run the SmolVLM backend.'
-          : 'SmolVLM failed to load. Check free memory and model integrity.';
+          ? 'SmolVLM2 loaded. Pick an image and run the SmolVLM2 backend.'
+          : 'SmolVLM2 failed to load. Check free memory and model integrity.';
     });
     unawaited(_refreshSmolVlmInfo());
   }
@@ -269,7 +287,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
     final buffer = StringBuffer()
       ..writeln('Local Stack')
       ..writeln('Foundation Models: ${status.foundationModelsAvailable}')
-      ..writeln('SmolVLM status: ${_modelStatusLabel(status.modelStatus)}')
+      ..writeln('SmolVLM2 status: ${_modelStatusLabel(status.modelStatus)}')
       ..writeln('Object detection: ${status.objectDetectionAvailable}')
       ..writeln('Depth estimation: ${status.depthEstimationAvailable}')
       ..writeln('Best local backend: ${status.bestLocalBackendLabel}')
@@ -281,7 +299,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       ..writeln(_nativeModelLine(diagnostics.objectDetector))
       ..writeln(_nativeModelLine(diagnostics.depthEstimator))
       ..writeln()
-      ..writeln('SmolVLM Files')
+      ..writeln('SmolVLM2 Files')
       ..writeln('Directory: ${info.path.isEmpty ? "(unknown)" : info.path}')
       ..writeln('Downloaded: ${info.downloaded}')
       ..writeln('Valid: ${info.valid}')
@@ -350,13 +368,13 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       case ModelStatus.ready:
         final loaded = await _onDeviceService.loadVlmModel();
         if (loaded) return;
-        throw StateError('SmolVLM files are present but loadModel failed.');
+        throw StateError('SmolVLM2 files are present but loadModel failed.');
       case ModelStatus.downloading:
-        throw StateError('SmolVLM model download is still in progress.');
+        throw StateError('SmolVLM2 model download is still in progress.');
       case ModelStatus.notAvailable:
-        throw StateError('SmolVLM runtime is not linked into this build.');
+        throw StateError('SmolVLM2 runtime is not linked into this build.');
       case ModelStatus.notDownloaded:
-        throw StateError('SmolVLM model files are not downloaded.');
+        throw StateError('SmolVLM2 model files are not downloaded.');
     }
   }
 
@@ -366,7 +384,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   }
 
   String _formatDiagnosticMap(Map<String, dynamic> map) {
-    final buffer = StringBuffer()..writeln('SmolVLM Self-Test');
+    final buffer = StringBuffer()..writeln('SmolVLM2 Self-Test');
     _writeDiagnosticMap(buffer, map);
     return buffer.toString().trim();
   }
@@ -663,7 +681,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
     final loaded = status == ModelStatus.loaded;
     final canDownload = !_isDownloadingModel && !downloaded && !_isRunning;
     final canLoad = !_isLoadingModel && downloaded && !loaded && !_isRunning;
-    final requiredBytes = info?.requiredBytes ?? 545590272;
+    final requiredBytes = info?.requiredBytes ?? 545592752;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.sm),
@@ -679,7 +697,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             children: [
               Expanded(
                 child: Text(
-                  'SmolVLM Setup',
+                  'SmolVLM2 Setup',
                   style: TextStyle(
                     fontSize: 18.sp,
                     fontWeight: FontWeight.w600,
@@ -785,11 +803,11 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
                 onPressed: _isRunning ? null : _copyAppLogs,
               ),
               _DiagButton(
-                label: 'Run SmolVLM Self-Test',
+                label: 'Run SmolVLM2 Self-Test',
                 onPressed: (_isRunning || !hasImage)
                     ? null
                     : () => _runTextDiagnostic(
-                        'Run SmolVLM Self-Test',
+                        'Run SmolVLM2 Self-Test',
                         _runSmolVlmSelfTestText,
                         requiresImage: true,
                       ),
@@ -805,11 +823,11 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
                       ),
               ),
               _DiagButton(
-                label: 'Run SmolVLM Direct',
+                label: 'Run SmolVLM2 Direct',
                 onPressed: (_isRunning || !hasImage)
                     ? null
                     : () => _runStreamingDiagnostic(
-                        'Run SmolVLM Direct',
+                        'Run SmolVLM2 Direct',
                         _buildSmolVlmDirectStream,
                       ),
               ),

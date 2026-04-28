@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Downloads and validates the SmolVLM GGUF files used by llama.cpp.
+/// Downloads and validates the SmolVLM2 GGUF files used by llama.cpp.
 final class ModelDownloadManager: NSObject {
 
     struct ModelFile {
@@ -13,19 +13,19 @@ final class ModelDownloadManager: NSObject {
 
     static let shared = ModelDownloadManager()
 
-    private static let baseURL = "https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/main"
+    private static let baseURL = "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main"
     private static let files: [ModelFile] = [
         ModelFile(
             name: LlamaService.textModelFilename,
             url: "\(baseURL)/\(LlamaService.textModelFilename)",
-            sizeBytes: 436_806_912,
-            sha256: "9d4612de6a42214499e301494a3ecc2be0abdd9de44e663bda63f1152fad1bf4"
+            sizeBytes: 436_807_568,
+            sha256: "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"
         ),
         ModelFile(
             name: LlamaService.visionProjectorFilename,
             url: "\(baseURL)/\(LlamaService.visionProjectorFilename)",
-            sizeBytes: 108_783_360,
-            sha256: "d1eb8b6b23979205fdf63703ed10f788131a3f812c7b1f72e0119d5d81295150"
+            sizeBytes: 108_785_184,
+            sha256: "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b"
         ),
     ]
 
@@ -139,7 +139,7 @@ final class ModelDownloadManager: NSObject {
             "sizeBytes": Int(downloadedBytes),
             "requiredBytes": Int(requiredBytes),
             "path": modelsDir.path,
-            "modelName": "SmolVLM-500M-Instruct Q8_0",
+            "modelName": "SmolVLM2-500M-Video-Instruct Q8_0",
             "files": fileStates,
         ]
     }

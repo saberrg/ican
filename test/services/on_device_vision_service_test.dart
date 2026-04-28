@@ -47,7 +47,7 @@ void main() {
         status.missingRequirements,
         containsAll([
           'Foundation Models unavailable',
-          'SmolVLM unavailable',
+          'SmolVLM2 unavailable',
           'YOLOv3Tiny model missing',
           'Depth Anything model missing',
         ]),
@@ -92,7 +92,7 @@ void main() {
       expect(status.hasSpatialPerception, isTrue);
       expect(
         status.missingRequirements,
-        contains('SmolVLM model not downloaded'),
+        contains('SmolVLM2 model not downloaded'),
       );
     },
   );
@@ -137,7 +137,7 @@ void main() {
     expect(diagnostics.objectDetector.message, contains('not found'));
   });
 
-  test('parses validated SmolVLM model info from native channel', () async {
+  test('parses validated SmolVLM2 model info from native channel', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           return switch (call.method) {
@@ -150,7 +150,14 @@ void main() {
 
     expect(info.downloaded, isTrue);
     expect(info.valid, isTrue);
-    expect(info.requiredBytes, 545590272);
+    expect(info.modelName, 'SmolVLM2-500M-Video-Instruct Q8_0');
+    expect(info.requiredBytes, 545592752);
+    expect(info.files.first.name, 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf');
+    expect(info.files.first.expectedSizeBytes, 436807568);
+    expect(
+      info.files.first.sha256,
+      '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
+    );
     expect(info.files, hasLength(2));
     expect(info.files.first.downloaded, isTrue);
   });
@@ -173,8 +180,8 @@ void main() {
                     'progress': 0.5,
                     'filesDownloaded': 0,
                     'totalFiles': 2,
-                    'requiredBytes': 545590272,
-                    'fileName': 'SmolVLM-500M-Instruct-Q8_0.gguf',
+                    'requiredBytes': 545592752,
+                    'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
                   });
                   events.success({
                     'status': 'complete',
@@ -182,7 +189,7 @@ void main() {
                     'progress': 1.0,
                     'filesDownloaded': 2,
                     'totalFiles': 2,
-                    'requiredBytes': 545590272,
+                    'requiredBytes': 545592752,
                   });
                   events.endOfStream();
                 });
@@ -354,7 +361,7 @@ void main() {
     );
   });
 
-  test('returns copyable SmolVLM self-test diagnostics', () async {
+  test('returns copyable SmolVLM2 self-test diagnostics', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           return switch (call.method) {
@@ -362,7 +369,9 @@ void main() {
               'llamaLinked': true,
               'loadSuccess': true,
               'tokenCount': 4,
-              'textModel': {'fileName': 'SmolVLM-500M-Instruct-Q8_0.gguf'},
+              'textModel': {
+                'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+              },
             },
             _ => throw PlatformException(code: 'unexpected'),
           };
@@ -376,7 +385,7 @@ void main() {
     expect(result['tokenCount'], 4);
     expect(
       result['textModel'],
-      containsPair('fileName', 'SmolVLM-500M-Instruct-Q8_0.gguf'),
+      containsPair('fileName', 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf'),
     );
   });
 }
@@ -402,26 +411,26 @@ const _modelInfo = {
   'downloaded': true,
   'valid': true,
   'downloading': false,
-  'sizeBytes': 545590272,
-  'requiredBytes': 545590272,
+  'sizeBytes': 545592752,
+  'requiredBytes': 545592752,
   'path': '/Documents/models',
-  'modelName': 'SmolVLM-500M-Instruct Q8_0',
+  'modelName': 'SmolVLM2-500M-Video-Instruct Q8_0',
   'files': [
     {
-      'name': 'SmolVLM-500M-Instruct-Q8_0.gguf',
+      'name': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
       'downloaded': true,
-      'sizeBytes': 436806912,
-      'expectedSizeBytes': 436806912,
+      'sizeBytes': 436807568,
+      'expectedSizeBytes': 436807568,
       'sha256':
-          '9d4612de6a42214499e301494a3ecc2be0abdd9de44e663bda63f1152fad1bf4',
+          '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
     },
     {
-      'name': 'mmproj-SmolVLM-500M-Instruct-Q8_0.gguf',
+      'name': 'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
       'downloaded': true,
-      'sizeBytes': 108783360,
-      'expectedSizeBytes': 108783360,
+      'sizeBytes': 108785184,
+      'expectedSizeBytes': 108785184,
       'sha256':
-          'd1eb8b6b23979205fdf63703ed10f788131a3f812c7b1f72e0119d5d81295150',
+          '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
     },
   ],
 };

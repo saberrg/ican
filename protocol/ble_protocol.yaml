@@ -65,8 +65,8 @@ characteristics:
   eye_capture_rx:
     service: eye
     uuid: "20000004-2000-2000-2000-200000000000"
-    direction: "write"  # App → Eye
-    description: "App can remotely trigger image capture on the Eye"
+    direction: "write, write_without_response, notify"  # App commands, Eye control events
+    description: "App can remotely trigger image capture on the Eye and receive control events"
     commands:
       CAPTURE: "Single-shot capture"
       LIVE_START: "Start firmware-driven periodic capture. Format: LIVE_START:{intervalMs}"
@@ -76,7 +76,7 @@ characteristics:
     events:
       "CAPTURE:START": "Firmware accepted a capture request and is attempting camera capture."
       "BUTTON:DOUBLE": "Physical button double-press detected (Eye -> App). Triggers voice command listening."
-      "STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}": "Status response to STATUS command."
+      "STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}": "Status response to STATUS command."
       "SIZE:{bytes}": "JPEG byte length for the next image stream."
       "CRC:{hex}": "CRC32 of the complete JPEG payload."
       "END:{chunks}": "Image stream finished after the given chunk count."

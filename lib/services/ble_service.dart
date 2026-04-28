@@ -22,6 +22,7 @@ enum BleReadinessPhase {
   connecting,
   discoveringServices,
   subscribing,
+  verifyingCommandPath,
   ready,
   failed,
 }
@@ -33,6 +34,7 @@ class BleReadinessStatus {
     required this.ready,
     this.deviceId,
     this.requiredCharacteristicsReady = false,
+    this.commandPathReady = false,
     this.lastError,
     this.lastEvent,
   });
@@ -42,6 +44,7 @@ class BleReadinessStatus {
   final bool ready;
   final String? deviceId;
   final bool requiredCharacteristicsReady;
+  final bool commandPathReady;
   final String? lastError;
   final String? lastEvent;
 
@@ -50,6 +53,7 @@ class BleReadinessStatus {
     bool? ready,
     String? deviceId,
     bool? requiredCharacteristicsReady,
+    bool? commandPathReady,
     String? lastError,
     String? lastEvent,
   }) {
@@ -60,6 +64,7 @@ class BleReadinessStatus {
       deviceId: deviceId ?? this.deviceId,
       requiredCharacteristicsReady:
           requiredCharacteristicsReady ?? this.requiredCharacteristicsReady,
+      commandPathReady: commandPathReady ?? this.commandPathReady,
       lastError: lastError,
       lastEvent: lastEvent ?? this.lastEvent,
     );
@@ -212,9 +217,19 @@ class BleService extends ChangeNotifier {
   String _lastControlMessage = ''; // Dedup control messages
   DateTime? _lastControlMessageTime;
   Timer? _imageTimeoutTimer;
+  Timer? _captureResponseRetryTimer;
+  int _captureResponseRetryCount = 0;
+  Timer? _eyeReconnectTimer;
+  Timer? _eyeHeartbeatTimer;
+  int _eyeReconnectAttempt = 0;
+  int _missedEyeHeartbeats = 0;
   String? _preferredEyeDeviceId;
 
   static const Duration _imageTransferTimeout = Duration(seconds: 45);
+  static const Duration _captureResponseTimeout = Duration(seconds: 1);
+  static const Duration _eyeHeartbeatInterval = Duration(seconds: 15);
+  static const Duration _eyeReconnectInitialDelay = Duration(seconds: 3);
+  static const Duration _eyeReconnectMaxDelay = Duration(seconds: 30);
 
   bool get _legacyImageAssemblerEnabled => false;
 
@@ -261,6 +276,7 @@ class BleService extends ChangeNotifier {
     if (_state == BleConnectionState.connecting ||
         _state == BleConnectionState.connected)
       return;
+    _cancelEyeReconnect();
     _preferredEyeDeviceId = mac;
     debugPrint('[BLE] Connect Eye to $mac...');
     _setState(BleConnectionState.connecting);
@@ -285,6 +301,14 @@ class BleService extends ChangeNotifier {
       } catch (e) {
         debugPrint('[BLE] Direct connect failed: $e');
         _setState(BleConnectionState.disconnected);
+        if (Platform.isIOS) {
+          _recordBleLog(
+            'Eye direct connect failed on iOS; falling back to service scan.',
+          );
+          await startScan();
+        } else {
+          _scheduleEyeReconnect('Direct Eye connect failed: ${e.runtimeType}.');
+        }
       }
     }
   }
@@ -393,11 +417,9 @@ class BleService extends ChangeNotifier {
           _winInstantTextSub?.cancel();
           _setState(BleConnectionState.disconnected);
           if (wasConnected && _preferredEyeDeviceId != null) {
-            Future.delayed(const Duration(seconds: 3), () {
-              if (_state == BleConnectionState.disconnected) {
-                connectToEyeByMac(_preferredEyeDeviceId!);
-              }
-            });
+            _scheduleEyeReconnect(
+              'Windows Eye connection stream disconnected.',
+            );
           }
         }
       });
@@ -407,6 +429,7 @@ class BleService extends ChangeNotifier {
       debugPrint('[BLE] Windows connect failed: $e');
       await _winConnectionSub?.cancel();
       _setState(BleConnectionState.disconnected);
+      _scheduleEyeReconnect('Windows Eye connect failed: ${e.runtimeType}.');
     }
   }
 
@@ -507,12 +530,12 @@ class BleService extends ChangeNotifier {
       debugPrint('[BLE] Windows Eye subscriptions active.');
       _setState(BleConnectionState.connected);
       _updateEyeReadiness(
-        BleReadinessPhase.ready,
+        BleReadinessPhase.verifyingCommandPath,
         deviceId: mac,
         requiredCharacteristicsReady: true,
-        lastEvent: 'iCan Eye connected.',
+        commandPathReady: false,
+        lastEvent: 'Eye notifications subscribed; verifying STATUS.',
       );
-      await setEyeProfile(1);
       await requestEyeStatus();
     } catch (e) {
       debugPrint('[BLE] Windows service subscription failed: $e');
@@ -1214,13 +1237,8 @@ class BleService extends ChangeNotifier {
           _setState(BleConnectionState.disconnected);
           _connectedDevice = null;
           _eyeCaptureRxChar = null;
-          // Auto-reconnect: retry after 3 s if we still have a target MAC
           if (_preferredEyeDeviceId != null) {
-            Future.delayed(const Duration(seconds: 3), () {
-              if (_state == BleConnectionState.disconnected) {
-                connectToEyeByMac(_preferredEyeDeviceId!);
-              }
-            });
+            _scheduleEyeReconnect('Eye connection state stream disconnected.');
           }
         }
       });
@@ -1228,15 +1246,15 @@ class BleService extends ChangeNotifier {
       await _discoverEyeServices(device);
       _setState(BleConnectionState.connected);
       _updateEyeReadiness(
-        BleReadinessPhase.ready,
+        BleReadinessPhase.verifyingCommandPath,
         deviceId: device.remoteId.str,
         requiredCharacteristicsReady: true,
-        lastEvent: 'iCan Eye connected.',
+        commandPathReady: false,
+        lastEvent: 'Eye notifications subscribed; verifying STATUS.',
       );
 
       // Persist this device ID for auto-connect on next app startup
       await DevicePrefsService.instance.saveLastDeviceId(device.remoteId.str);
-      await setEyeProfile(1);
       await requestEyeStatus();
     } catch (e) {
       debugPrint('[BLE] Connection error: $e');
@@ -1246,6 +1264,14 @@ class BleService extends ChangeNotifier {
         lastError: 'Eye connection failed: $e',
       );
       _setState(BleConnectionState.disconnected);
+      if (Platform.isIOS) {
+        _recordBleLog(
+          'Eye connection failed on iOS; falling back to service scan.',
+        );
+        await startScan();
+      } else {
+        _scheduleEyeReconnect('Eye connect failed: ${e.runtimeType}.');
+      }
     }
   }
 
@@ -1392,6 +1418,11 @@ class BleService extends ChangeNotifier {
     _lastControlMessage = message;
     _lastControlMessageTime = now;
     debugPrint('[BLE Eye Msg] $message');
+    _recordEyeControlMessage(message);
+
+    if (message.startsWith(EyeEvents.statusPrefix)) {
+      _markEyeCommandPathReady(message);
+    }
 
     if (message.startsWith('BUTTON:')) {
       _buttonEventController.add(message);
@@ -1401,6 +1432,7 @@ class BleService extends ChangeNotifier {
     final event = _imageAssembler.handleControlMessage(message);
     if (event != null) {
       if (event.captureStarted || event.sizeArrived) {
+        _cancelCaptureResponseRetryTimer();
         _captureStartedController.add(null);
       }
       if (event.progress) {
@@ -1540,6 +1572,7 @@ class BleService extends ChangeNotifier {
     final diagnostic = event.diagnostic;
     if (diagnostic != null) {
       _imageTimeoutTimer?.cancel();
+      _cancelCaptureResponseRetryTimer();
       _emitEyeDiagnostic(diagnostic);
       return;
     }
@@ -1547,6 +1580,7 @@ class BleService extends ChangeNotifier {
     final image = event.image;
     if (image != null) {
       _imageTimeoutTimer?.cancel();
+      _cancelCaptureResponseRetryTimer();
       debugPrint('[BLE] Emitting complete image (${image.length} bytes).');
       _imageController.add(image);
     }
@@ -1567,14 +1601,43 @@ class BleService extends ChangeNotifier {
     _emitImageTimeoutDiagnostic();
   }
 
-  void _emitImageTimeoutDiagnostic() {
+  @visibleForTesting
+  void beginEyeCaptureCommandForTesting() {
+    _imageAssembler.beginCaptureCommand();
+    _captureResponseRetryCount = 0;
+  }
+
+  @visibleForTesting
+  Future<void> handleCaptureResponseTimeoutForTesting() {
+    return _handleCaptureResponseTimeout();
+  }
+
+  @visibleForTesting
+  void updateEyeReadinessForTesting(
+    BleReadinessPhase phase, {
+    bool? requiredCharacteristicsReady,
+    bool? commandPathReady,
+  }) {
+    _updateEyeReadiness(
+      phase,
+      requiredCharacteristicsReady: requiredCharacteristicsReady,
+      commandPathReady: commandPathReady,
+    );
+  }
+
+  void _emitImageTimeoutDiagnostic({String? context}) {
+    _cancelCaptureResponseRetryTimer();
     final diagnostic = _imageAssembler.handleTimeout();
-    _emitEyeDiagnostic(diagnostic, context: 'Image transfer timeout.');
+    _emitEyeDiagnostic(
+      diagnostic,
+      context: context ?? 'Image transfer timeout.',
+    );
   }
 
   void _cancelImageTransfer({bool reset = false}) {
     _imageTimeoutTimer?.cancel();
     _imageTimeoutTimer = null;
+    _cancelCaptureResponseRetryTimer();
     if (reset) {
       _imageAssembler.reset();
     }
@@ -1587,6 +1650,165 @@ class BleService extends ChangeNotifier {
         _emitImageTimeoutDiagnostic();
       }
     });
+  }
+
+  void _armCaptureResponseRetry() {
+    _captureResponseRetryTimer?.cancel();
+    _captureResponseRetryTimer = Timer(_captureResponseTimeout, () {
+      unawaited(_handleCaptureResponseTimeout());
+    });
+  }
+
+  void _cancelCaptureResponseRetryTimer() {
+    _captureResponseRetryTimer?.cancel();
+    _captureResponseRetryTimer = null;
+  }
+
+  void _cancelEyeReconnect() {
+    _eyeReconnectTimer?.cancel();
+    _eyeReconnectTimer = null;
+  }
+
+  void _scheduleEyeReconnect(String reason, {Duration? initialDelay}) {
+    if (_preferredEyeDeviceId == null) return;
+    if (_eyeReconnectTimer != null) {
+      _recordBleLog(
+        'Eye reconnect already scheduled; ignoring duplicate. reason=$reason',
+      );
+      return;
+    }
+    final attempt = _eyeReconnectAttempt + 1;
+    final backoffSeconds =
+        (_eyeReconnectInitialDelay.inSeconds * (1 << _eyeReconnectAttempt))
+            .clamp(
+              _eyeReconnectInitialDelay.inSeconds,
+              _eyeReconnectMaxDelay.inSeconds,
+            )
+            .toInt();
+    final delay = initialDelay ?? Duration(seconds: backoffSeconds);
+    _eyeReconnectAttempt = attempt;
+    _recordBleLog(
+      'Eye reconnect scheduled attempt=$attempt delay=${delay.inSeconds}s reason=$reason',
+    );
+    _eyeReconnectTimer = Timer(delay, () {
+      _eyeReconnectTimer = null;
+      unawaited(_performEyeReconnect());
+    });
+  }
+
+  Future<void> _performEyeReconnect() async {
+    if (_state == BleConnectionState.connected ||
+        _state == BleConnectionState.connecting ||
+        _state == BleConnectionState.scanning) {
+      return;
+    }
+    final target = _preferredEyeDeviceId;
+    if (target == null) return;
+    _recordBleLog('Eye reconnect attempt $_eyeReconnectAttempt starting.');
+    await connectToEyeByMac(target);
+  }
+
+  void _startEyeHeartbeat() {
+    if (_eyeHeartbeatTimer != null) return;
+    _missedEyeHeartbeats = 0;
+    _eyeHeartbeatTimer = Timer.periodic(_eyeHeartbeatInterval, (_) {
+      unawaited(_handleEyeHeartbeatTick());
+    });
+    _recordBleLog('Eye heartbeat started.');
+  }
+
+  void _stopEyeHeartbeat() {
+    _eyeHeartbeatTimer?.cancel();
+    _eyeHeartbeatTimer = null;
+    _missedEyeHeartbeats = 0;
+  }
+
+  Future<void> _handleEyeHeartbeatTick({bool sendCommand = true}) async {
+    if (_state != BleConnectionState.connected) {
+      _stopEyeHeartbeat();
+      return;
+    }
+    if (_imageAssembler.hasActiveTransfer) return;
+    if (!_eyeReadinessStatus.requiredCharacteristicsReady) return;
+
+    _missedEyeHeartbeats++;
+    _recordBleLog('Eye heartbeat STATUS missed=$_missedEyeHeartbeats.');
+    if (_missedEyeHeartbeats >= 2) {
+      _recordBleLog('Eye heartbeat missed twice; marking Eye not ready.');
+      _updateEyeReadiness(
+        BleReadinessPhase.failed,
+        requiredCharacteristicsReady:
+            _eyeReadinessStatus.requiredCharacteristicsReady,
+        commandPathReady: false,
+        lastError: 'Eye STATUS heartbeat missed twice.',
+      );
+      await _forceEyeReconnect('Eye STATUS heartbeat missed twice.');
+      return;
+    }
+
+    if (sendCommand) {
+      await requestEyeStatus();
+    }
+  }
+
+  Future<void> _forceEyeReconnect(String reason) async {
+    _stopEyeHeartbeat();
+    await _cancelEyeNotificationSubscriptions(
+      disablePlatformNotifications: false,
+    );
+    if (Platform.isWindows) {
+      final mac = _connectedWindowsMac;
+      _connectedWindowsMac = null;
+      if (mac != null) {
+        try {
+          await WinBle.disconnect(mac);
+        } catch (e) {
+          debugPrint('[BLE] Eye reconnect WinBle disconnect failed: $e');
+        }
+      }
+    } else {
+      final device = _connectedDevice;
+      _connectedDevice = null;
+      if (device != null) {
+        try {
+          await device.disconnect();
+        } catch (e) {
+          debugPrint('[BLE] Eye reconnect disconnect failed: $e');
+        }
+      }
+    }
+    _setState(BleConnectionState.disconnected);
+    _scheduleEyeReconnect(reason, initialDelay: Duration.zero);
+  }
+
+  Future<void> _handleCaptureResponseTimeout() async {
+    if (!_imageAssembler.hasActiveTransfer) return;
+    if (_imageAssembler.currentTimeoutStage !=
+        EyeTransferTimeoutStage.awaitingCaptureStart) {
+      _cancelCaptureResponseRetryTimer();
+      return;
+    }
+
+    if (_captureResponseRetryCount == 0) {
+      _captureResponseRetryCount = 1;
+      _recordBleLog(
+        'Eye command CAPTURE got no CAPTURE:START or SIZE within '
+        '${_captureResponseTimeout.inMilliseconds}ms; retrying once.',
+      );
+      _imageAssembler.beginCaptureCommand();
+      await _sendEyeCommand(EyeCommands.capture);
+      if (_imageAssembler.hasActiveTransfer &&
+          _imageAssembler.currentTimeoutStage ==
+              EyeTransferTimeoutStage.awaitingCaptureStart) {
+        _armCaptureResponseRetry();
+      }
+      return;
+    }
+
+    _recordBleLog(
+      'Eye command CAPTURE retry also got no CAPTURE:START or SIZE; emitting E01.',
+    );
+    _emitImageTimeoutDiagnostic(context: 'Capture command response timeout.');
   }
 
   void _emitImageIfValid(List<int> buffer) {
@@ -1631,6 +1853,8 @@ class BleService extends ChangeNotifier {
   Future<void> disconnectAndForget() async {
     debugPrint('[BLE] Disconnecting and clearing saved device...');
     _preferredEyeDeviceId = null;
+    _cancelEyeReconnect();
+    _stopEyeHeartbeat();
     try {
       await DevicePrefsService.instance.clearLastDeviceId();
       if (Platform.isWindows) {
@@ -1737,8 +1961,15 @@ class BleService extends ChangeNotifier {
   /// Remotely trigger a single image capture on the Eye.
   Future<void> triggerEyeCapture() {
     _imageAssembler.beginCaptureCommand();
+    _captureResponseRetryCount = 0;
     _armImageTransferTimeout();
-    return _sendEyeCommand(EyeCommands.capture);
+    return _sendEyeCommand(EyeCommands.capture).then((_) {
+      if (_imageAssembler.hasActiveTransfer &&
+          _imageAssembler.currentTimeoutStage ==
+              EyeTransferTimeoutStage.awaitingCaptureStart) {
+        _armCaptureResponseRetry();
+      }
+    });
   }
 
   /// Start firmware-driven periodic capture at [intervalMs].
@@ -1764,6 +1995,34 @@ class BleService extends ChangeNotifier {
   @visibleForTesting
   void setEyeConnectionStateForTesting(BleConnectionState state) {
     _setState(state);
+  }
+
+  @visibleForTesting
+  bool get eyeReconnectPendingForTesting => _eyeReconnectTimer != null;
+
+  @visibleForTesting
+  int get eyeReconnectAttemptForTesting => _eyeReconnectAttempt;
+
+  @visibleForTesting
+  int get missedEyeHeartbeatsForTesting => _missedEyeHeartbeats;
+
+  @visibleForTesting
+  void scheduleEyeReconnectForTesting(String reason) {
+    _preferredEyeDeviceId ??= fallbackEyeDeviceId;
+    _scheduleEyeReconnect(reason);
+  }
+
+  @visibleForTesting
+  Future<void> handleEyeHeartbeatTickForTesting({bool sendCommand = false}) {
+    return _handleEyeHeartbeatTick(sendCommand: sendCommand);
+  }
+
+  @visibleForTesting
+  void resetEyeReliabilityForTesting() {
+    _cancelEyeReconnect();
+    _stopEyeHeartbeat();
+    _eyeReconnectAttempt = 0;
+    _missedEyeHeartbeats = 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -1810,17 +2069,65 @@ class BleService extends ChangeNotifier {
     unawaited(AppLogService.instance.record(message, source: 'ble'));
   }
 
+  void _recordEyeControlMessage(String message) {
+    final isTrackedControlMessage =
+        message.startsWith(EyeEvents.statusPrefix) ||
+        message.startsWith(EyeEvents.profileSetPrefix) ||
+        message == EyeEvents.captureStart ||
+        message.startsWith(EyeEvents.sizePrefix) ||
+        message.startsWith(EyeEvents.crcPrefix) ||
+        message.startsWith(EyeEvents.endPrefix) ||
+        message.startsWith(EyeEvents.errorPrefix);
+    if (!isTrackedControlMessage) return;
+    _recordBleLog('Eye control notification: $message');
+  }
+
+  void _markEyeCommandPathReady(String statusMessage) {
+    _missedEyeHeartbeats = 0;
+    if (_eyeReadinessStatus.commandPathReady &&
+        _eyeReadinessStatus.phase == BleReadinessPhase.ready) {
+      _startEyeHeartbeat();
+      return;
+    }
+    _updateEyeReadiness(
+      BleReadinessPhase.ready,
+      requiredCharacteristicsReady: true,
+      commandPathReady: true,
+      lastEvent: 'Eye STATUS round trip verified: $statusMessage',
+    );
+    _eyeReconnectAttempt = 0;
+    _startEyeHeartbeat();
+    unawaited(setEyeProfile(1));
+  }
+
   void _updateEyeReadiness(
     BleReadinessPhase phase, {
     String? deviceId,
     bool? requiredCharacteristicsReady,
+    bool? commandPathReady,
     String? lastError,
     String? lastEvent,
   }) {
     final ready = phase == BleReadinessPhase.ready;
+    final nextRequiredCharacteristicsReady =
+        requiredCharacteristicsReady ??
+        (phase == BleReadinessPhase.idle
+            ? false
+            : ready
+            ? true
+            : null) ??
+        _eyeReadinessStatus.requiredCharacteristicsReady;
+    final nextCommandPathReady =
+        commandPathReady ??
+        (phase == BleReadinessPhase.idle
+            ? false
+            : ready
+            ? true
+            : false);
     _recordBleLog(
       'Eye readiness ${_eyeReadinessStatus.phase.name}->${phase.name} '
-      'ready=$ready requiredChars=${requiredCharacteristicsReady ?? (ready ? true : false)}'
+      'ready=$ready requiredChars=$nextRequiredCharacteristicsReady '
+      'commandPath=$nextCommandPathReady'
       '${lastEvent == null ? '' : ' event=$lastEvent'}'
       '${lastError == null ? '' : ' error=$lastError'}',
     );
@@ -1828,8 +2135,8 @@ class BleService extends ChangeNotifier {
       phase: phase,
       ready: ready,
       deviceId: deviceId,
-      requiredCharacteristicsReady:
-          requiredCharacteristicsReady ?? (ready ? true : false),
+      requiredCharacteristicsReady: nextRequiredCharacteristicsReady,
+      commandPathReady: nextCommandPathReady,
       lastError: lastError,
       lastEvent: lastEvent,
     );
@@ -1848,6 +2155,9 @@ class BleService extends ChangeNotifier {
   void _setState(BleConnectionState newState) {
     if (newState == BleConnectionState.disconnected) {
       _cancelImageTransfer(reset: true);
+      _stopEyeHeartbeat();
+    } else if (newState == BleConnectionState.connected) {
+      _cancelEyeReconnect();
     }
     if (_state != newState) {
       _recordBleLog('Eye connection state ${_state.name}->${newState.name}.');
@@ -1884,6 +2194,8 @@ class BleService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cancelEyeReconnect();
+    _stopEyeHeartbeat();
     if (Platform.isWindows) {
       _winConnectionSub?.cancel();
       _winImageSub?.cancel();

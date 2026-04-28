@@ -214,12 +214,12 @@ class VisionHealthService {
   VisionRuntimeCheck _smolRuntimeCheck(ModelStatus status) {
     return switch (status) {
       ModelStatus.notAvailable => VisionRuntimeCheck.unavailable(
-        'SmolVLM runtime',
-        'SmolVLM runtime is not linked into this build.',
+        'SmolVLM2 runtime',
+        'SmolVLM2 runtime is not linked into this build.',
       ),
       _ => VisionRuntimeCheck.available(
-        'SmolVLM runtime',
-        'SmolVLM runtime is linked.',
+        'SmolVLM2 runtime',
+        'SmolVLM2 runtime is linked.',
       ),
     };
   }
@@ -227,24 +227,24 @@ class VisionHealthService {
   VisionRuntimeCheck _smolModelCheck(ModelStatus status) {
     return switch (status) {
       ModelStatus.loaded => VisionRuntimeCheck.available(
-        'SmolVLM models',
-        'SmolVLM model is loaded.',
+        'SmolVLM2 models',
+        'SmolVLM2 model is loaded.',
       ),
       ModelStatus.ready => VisionRuntimeCheck.available(
-        'SmolVLM models',
-        'SmolVLM model files are downloaded.',
+        'SmolVLM2 models',
+        'SmolVLM2 model files are downloaded.',
       ),
       ModelStatus.downloading => VisionRuntimeCheck.degraded(
-        'SmolVLM models',
-        'SmolVLM model download is still in progress.',
+        'SmolVLM2 models',
+        'SmolVLM2 model download is still in progress.',
       ),
       ModelStatus.notAvailable => VisionRuntimeCheck.unavailable(
-        'SmolVLM models',
-        'SmolVLM model support is unavailable in this build.',
+        'SmolVLM2 models',
+        'SmolVLM2 model support is unavailable in this build.',
       ),
       ModelStatus.notDownloaded => VisionRuntimeCheck.unavailable(
-        'SmolVLM models',
-        'SmolVLM model files are not downloaded.',
+        'SmolVLM2 models',
+        'SmolVLM2 model files are not downloaded.',
       ),
     };
   }

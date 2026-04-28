@@ -25,6 +25,7 @@
 
 // Hardware Button Configuration
 #define CAPTURE_BUTTON_PIN D1
+static const char *ICAN_EYE_FIRMWARE_VERSION = "1.0.0+25";
 const unsigned long BUTTON_DEBOUNCE_MS = 50;
 const unsigned long DOUBLE_PRESS_WINDOW_MS = 400;
 
@@ -219,9 +220,9 @@ void loop() {
                   liveMode ? "ON" : "OFF");
     {
       char msg[96];
-      snprintf(msg, sizeof(msg), "STATUS:%d:%s:%s:%d", getCurrentProfile(),
+      snprintf(msg, sizeof(msg), "STATUS:%d:%s:%s:%d:%s", getCurrentProfile(),
                profiles[getCurrentProfile()].name, liveMode ? "LIVE" : "IDLE",
-               liveIntervalMs);
+               liveIntervalMs, ICAN_EYE_FIRMWARE_VERSION);
       sendControlMessage(msg);
     }
     break;

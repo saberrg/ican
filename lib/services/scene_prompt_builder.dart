@@ -52,7 +52,7 @@ class ScenePromptBuilder {
       systemPrompt: systemPrompt,
       userPrompt:
           'Describe this image for safe navigation and awareness. Keep it concise and spoken.',
-      maxOutputTokens: detailLevel == DetailLevel.brief ? 220 : 500,
+      maxOutputTokens: detailLevel == DetailLevel.brief ? 384 : 700,
     );
   }
 }

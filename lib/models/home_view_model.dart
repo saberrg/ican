@@ -118,7 +118,11 @@ class HomeViewModel extends ChangeNotifier {
   bool get isCaneConnected =>
       BleService.instance.caneState == BleConnectionState.connected;
   bool get canDescribe =>
-      isEyeConnected && !_isProcessing && !_isPaused && !_liveVisionActive;
+      isEyeConnected &&
+      BleService.instance.eyeReadinessStatus.ready &&
+      !_isProcessing &&
+      !_isPaused &&
+      !_liveVisionActive;
 
   void _init() {
     _bleListener = () {
@@ -235,15 +239,22 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> refreshOfflineVisionStatus() async {
-    final status = await _onDeviceVision.getOfflineVisionStatus();
-    final runtimeStatus = await VisionHealthService(
-      onDeviceService: _onDeviceVision,
-      cloudService: sceneService.cloudService,
-    ).check(eyeConnected: isEyeConnected, includeNetworkCheck: false);
-    if (_disposed) return;
-    _offlineVisionStatus = status;
-    _visionRuntimeStatus = runtimeStatus;
-    notifyListeners();
+    try {
+      final status = await _onDeviceVision.getOfflineVisionStatus();
+      final runtimeStatus = await VisionHealthService(
+        onDeviceService: _onDeviceVision,
+        cloudService: sceneService.cloudService,
+      ).check(eyeConnected: isEyeConnected, includeNetworkCheck: false);
+      if (_disposed) return;
+      _offlineVisionStatus = status;
+      _visionRuntimeStatus = runtimeStatus;
+      notifyListeners();
+    } catch (e) {
+      if (_disposed) return;
+      final message = _localFailureDiagnostic(e);
+      _setLastDiagnostic(message);
+      _recordDescribeLog('Offline vision status refresh failed: $message');
+    }
   }
 
   void _startProcessingTimeout({bool cameraTransfer = false}) {

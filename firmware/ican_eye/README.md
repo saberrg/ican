@@ -28,7 +28,7 @@ Characteristics:
 
 - `20000002-2000-2000-2000-200000000000`: instant text notify
 - `20000003-2000-2000-2000-200000000000`: image stream notify
-- `20000004-2000-2000-2000-200000000000`: command write and control notify
+- `20000004-2000-2000-2000-200000000000`: command write/write-without-response and control notify
 
 Commands from app to Eye:
 
@@ -41,9 +41,11 @@ Commands from app to Eye:
 Events from Eye to app:
 
 - `BUTTON:DOUBLE`
+- `CAPTURE:START`
 - `SIZE:{bytes}`
+- `CRC:{hex}`
 - `END:{chunks}`
-- `STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}`
+- `STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}`
 - `ERR:{code}`
 
 Image chunks are `[uint16_le sequence][jpeg payload]`, capped by negotiated
