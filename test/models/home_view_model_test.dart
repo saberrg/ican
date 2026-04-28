@@ -5,6 +5,7 @@ import 'package:ican/models/home_view_model.dart';
 import 'package:ican/models/settings_provider.dart';
 import 'package:ican/protocol/describe_attempt_trace.dart';
 import 'package:ican/protocol/eye_capture_diagnostics.dart';
+import 'package:ican/services/ble_service.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:ican/services/scene_description_service.dart';
 import 'package:ican/services/tts_service.dart';
@@ -44,6 +45,19 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
       expect(speech.spoken.last, startsWith('Eye E01:'));
+      expect(viewModel.isProcessing, isFalse);
+    });
+
+    test('speaks Eye E01 when Eye disconnects before capture starts', () async {
+      viewModel.startCaptureTimeoutForTesting();
+
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.disconnected,
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(speech.spoken.last, startsWith('Eye E01:'));
+      expect(speech.spoken.last, isNot(startsWith('Eye E02:')));
       expect(viewModel.isProcessing, isFalse);
     });
 

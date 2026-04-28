@@ -6,6 +6,7 @@ import 'package:win_ble/win_ble.dart';
 import 'package:win_ble/win_file.dart' show WinServer;
 import '../protocol/ble_protocol.dart';
 import '../protocol/eye_capture_diagnostics.dart';
+import 'app_log_service.dart';
 import 'device_prefs_service.dart';
 import 'notification_service.dart';
 
@@ -1539,9 +1540,7 @@ class BleService extends ChangeNotifier {
     final diagnostic = event.diagnostic;
     if (diagnostic != null) {
       _imageTimeoutTimer?.cancel();
-      _lastEyeCaptureDiagnostic = diagnostic;
-      _eyeDiagnosticController.add(diagnostic);
-      debugPrint('[BLE Eye Diagnostic] ${diagnostic.spokenMessage}');
+      _emitEyeDiagnostic(diagnostic);
       return;
     }
 
@@ -1570,9 +1569,7 @@ class BleService extends ChangeNotifier {
 
   void _emitImageTimeoutDiagnostic() {
     final diagnostic = _imageAssembler.handleTimeout();
-    _lastEyeCaptureDiagnostic = diagnostic;
-    _eyeDiagnosticController.add(diagnostic);
-    debugPrint('[BLE Eye Diagnostic] ${diagnostic.spokenMessage}');
+    _emitEyeDiagnostic(diagnostic, context: 'Image transfer timeout.');
   }
 
   void _cancelImageTransfer({bool reset = false}) {
@@ -1693,6 +1690,11 @@ class BleService extends ChangeNotifier {
       return;
     }
     debugPrint('[BLE] Sending Eye command: $cmd');
+    _recordBleLog(
+      'Sending Eye command: $cmd. readiness=${_eyeReadinessStatus.phase.name} '
+      'ready=${_eyeReadinessStatus.ready} '
+      'requiredChars=${_eyeReadinessStatus.requiredCharacteristicsReady}',
+    );
     if (Platform.isWindows) {
       if (_connectedWindowsMac == null) return;
       try {
@@ -1703,33 +1705,32 @@ class BleService extends ChangeNotifier {
           data: Uint8List.fromList(cmd.codeUnits),
           writeWithResponse: false,
         );
+        _recordBleLog('Eye command $cmd write succeeded on Windows.');
       } catch (e) {
         debugPrint('[BLE] Eye command write FAILED: $e');
+        _recordBleLog(
+          'Eye command $cmd write failed on Windows: ${e.runtimeType}.',
+        );
       }
     } else {
       if (_eyeCaptureRxChar == null) {
-        final diagnostic = EyeCaptureDiagnostic(
-          code: EyeCaptureDiagnosticCode.noCaptureStartOrSize,
-          captureStarted: false,
-          sizeArrived: false,
-          expectedBytes: 0,
-          receivedBytes: 0,
-          uniqueChunks: 0,
-          duplicateChunks: 0,
-          endArrived: false,
-          jpegMagicValid: false,
-          jpegEndValid: false,
-          timeoutStage: EyeTransferTimeoutStage.awaitingCaptureStart,
+        _emitEyeCommandWriteFailureDiagnostic(
+          cmd,
+          StateError('Eye control characteristic is missing.'),
         );
-        _lastEyeCaptureDiagnostic = diagnostic;
-        _eyeDiagnosticController.add(diagnostic);
         _updateEyeReadiness(
           BleReadinessPhase.failed,
           lastError: 'Eye control characteristic is missing.',
         );
         return;
       }
-      await _eyeCaptureRxChar!.write(cmd.codeUnits, withoutResponse: false);
+      try {
+        await _eyeCaptureRxChar!.write(cmd.codeUnits, withoutResponse: false);
+        _recordBleLog('Eye command $cmd write succeeded.');
+      } catch (e) {
+        debugPrint('[BLE] Eye command write FAILED: $e');
+        _emitEyeCommandWriteFailureDiagnostic(cmd, e);
+      }
     }
   }
 
@@ -1755,9 +1756,59 @@ class BleService extends ChangeNotifier {
 
   Future<void> requestEyeStatus() => _sendEyeCommand(EyeCommands.status);
 
+  @visibleForTesting
+  void emitEyeCommandWriteFailureForTesting(String command, Object error) {
+    _emitEyeCommandWriteFailureDiagnostic(command, error);
+  }
+
+  @visibleForTesting
+  void setEyeConnectionStateForTesting(BleConnectionState state) {
+    _setState(state);
+  }
+
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
+
+  void _emitEyeCommandWriteFailureDiagnostic(String command, Object error) {
+    _cancelImageTransfer(reset: true);
+    const diagnostic = EyeCaptureDiagnostic(
+      code: EyeCaptureDiagnosticCode.noCaptureStartOrSize,
+      captureStarted: false,
+      sizeArrived: false,
+      expectedBytes: 0,
+      receivedBytes: 0,
+      uniqueChunks: 0,
+      duplicateChunks: 0,
+      endArrived: false,
+      jpegMagicValid: false,
+      jpegEndValid: false,
+      timeoutStage: EyeTransferTimeoutStage.awaitingCaptureStart,
+    );
+    _emitEyeDiagnostic(
+      diagnostic,
+      context: 'Eye command $command write failed: ${error.runtimeType}.',
+    );
+    _updateEyeReadiness(
+      BleReadinessPhase.failed,
+      lastError: 'Eye command $command write failed: ${error.runtimeType}.',
+    );
+  }
+
+  void _emitEyeDiagnostic(EyeCaptureDiagnostic diagnostic, {String? context}) {
+    _lastEyeCaptureDiagnostic = diagnostic;
+    _eyeDiagnosticController.add(diagnostic);
+    final message = diagnostic.spokenMessage;
+    debugPrint('[BLE Eye Diagnostic] $message');
+    _recordBleLog(
+      '${context == null ? '' : '$context '}'
+      'Eye diagnostic ${diagnostic.stableCode}: $message',
+    );
+  }
+
+  void _recordBleLog(String message) {
+    unawaited(AppLogService.instance.record(message, source: 'ble'));
+  }
 
   void _updateEyeReadiness(
     BleReadinessPhase phase, {
@@ -1767,6 +1818,12 @@ class BleService extends ChangeNotifier {
     String? lastEvent,
   }) {
     final ready = phase == BleReadinessPhase.ready;
+    _recordBleLog(
+      'Eye readiness ${_eyeReadinessStatus.phase.name}->${phase.name} '
+      'ready=$ready requiredChars=${requiredCharacteristicsReady ?? (ready ? true : false)}'
+      '${lastEvent == null ? '' : ' event=$lastEvent'}'
+      '${lastError == null ? '' : ' error=$lastError'}',
+    );
     _eyeReadinessStatus = _eyeReadinessStatus.copyWith(
       phase: phase,
       ready: ready,
@@ -1791,6 +1848,9 @@ class BleService extends ChangeNotifier {
   void _setState(BleConnectionState newState) {
     if (newState == BleConnectionState.disconnected) {
       _cancelImageTransfer(reset: true);
+    }
+    if (_state != newState) {
+      _recordBleLog('Eye connection state ${_state.name}->${newState.name}.');
     }
     _state = newState;
     if (newState == BleConnectionState.disconnected) {
