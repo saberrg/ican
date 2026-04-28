@@ -6,6 +6,7 @@ import 'package:image/image.dart' as img;
 import '../protocol/describe_attempt_trace.dart';
 import '../protocol/eye_capture_diagnostics.dart';
 import '../protocol/ble_protocol.dart';
+import '../services/app_log_service.dart';
 import '../services/ble_service.dart';
 import '../services/on_device_vision_service.dart';
 import '../services/scene_description_service.dart';
@@ -132,10 +133,14 @@ class HomeViewModel extends ChangeNotifier {
         _waitingForCaptureImage = false;
         _processingTimeout?.cancel();
         if (wasWaitingForCapture) {
+          _recordDescribeLog(
+            'Eye disconnected while awaiting capture start. '
+            'readiness=${BleService.instance.eyeReadinessStatus.phase.name}',
+          );
           unawaited(
             _speakEyeCaptureDiagnostic(
               const EyeCaptureDiagnostic(
-                code: EyeCaptureDiagnosticCode.streamStalled,
+                code: EyeCaptureDiagnosticCode.noCaptureStartOrSize,
                 captureStarted: false,
                 sizeArrived: false,
                 expectedBytes: 0,
@@ -166,6 +171,7 @@ class HomeViewModel extends ChangeNotifier {
       if (!_liveVisionActive) {
         _isProcessing = true;
         _waitingForCaptureImage = true;
+        _recordDescribeLog('Eye capture start observed.');
         unawaited(_updateDescribeTrace(DescribePipelineStage.captureStarted));
         notifyListeners();
         _startProcessingTimeout(cameraTransfer: true);
@@ -267,6 +273,7 @@ class HomeViewModel extends ChangeNotifier {
               ),
             ),
           );
+          _recordDescribeLog('Capture timeout from Home timer before image.');
         }
       }
     });
@@ -457,10 +464,17 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<String> describeNow() {
+    final readiness = BleService.instance.eyeReadinessStatus;
     if (!canDescribe) {
       const message =
           'Eye E01: no capture start or SIZE from Eye. Stage: camera not ready; received 0/unknown bytes across 0 chunks.';
       _setLastDiagnostic(message);
+      _recordDescribeLog(
+        'Describe rejected. eyeConnected=$isEyeConnected '
+        'processing=$_isProcessing paused=$_isPaused live=$_liveVisionActive '
+        'readiness=${readiness.phase.name} ready=${readiness.ready} '
+        'requiredChars=${readiness.requiredCharacteristicsReady}',
+      );
       return Future.value(message);
     }
     if (_describeNowCompleter != null && !_describeNowCompleter!.isCompleted) {
@@ -476,8 +490,21 @@ class HomeViewModel extends ChangeNotifier {
         imageBytes: 0,
       ),
     );
+    _recordDescribeLog(
+      'Describe requested. readiness=${readiness.phase.name} '
+      'ready=${readiness.ready} '
+      'requiredChars=${readiness.requiredCharacteristicsReady} '
+      'visionMode=${sceneService.mode.name} '
+      'detail=${settingsProvider.detailLevel.name}',
+    );
     _startProcessingTimeout(cameraTransfer: true);
-    unawaited(BleService.instance.triggerEyeCapture());
+    unawaited(
+      BleService.instance.triggerEyeCapture().catchError((Object error) {
+        _recordDescribeLog(
+          'Capture command future failed: ${error.runtimeType}.',
+        );
+      }),
+    );
     return _describeNowCompleter!.future;
   }
 
@@ -660,6 +687,7 @@ class HomeViewModel extends ChangeNotifier {
     EyeCaptureDiagnostic diagnostic,
   ) async {
     final message = diagnostic.spokenMessage;
+    _recordDescribeLog('Eye diagnostic ${diagnostic.stableCode}: $message');
     _setLastDiagnostic(message);
     await _updateDescribeTrace(
       DescribePipelineStage.failed,
@@ -769,6 +797,7 @@ class HomeViewModel extends ChangeNotifier {
       detailLevel: settingsProvider.detailLevel.name,
     );
     _currentTrace = trace;
+    _recordDescribeLog('Describe attempt ${trace.attemptId} ${stage.name}.');
     await _traceStore.save(trace);
   }
 
@@ -791,7 +820,22 @@ class HomeViewModel extends ChangeNotifier {
       lastError: lastError,
     );
     _currentTrace = next;
+    final errorSuffix = lastError == null
+        ? ''
+        : ' error=${_shortLog(lastError)}';
+    _recordDescribeLog(
+      'Describe attempt ${next.attemptId} ${stage.name}$errorSuffix',
+    );
     await _traceStore.save(next);
+  }
+
+  String _shortLog(String message) {
+    if (message.length <= 160) return message;
+    return '${message.substring(0, 160)}...';
+  }
+
+  void _recordDescribeLog(String message) {
+    unawaited(AppLogService.instance.record(message, source: 'describe'));
   }
 
   String _computeFingerprint(Uint8List data) {

@@ -66,6 +66,13 @@ class AppLogService {
     return entries.join('\n');
   }
 
+  @visibleForTesting
+  void resetForTesting() {
+    _entries.clear();
+    _writeChain = Future<void>.value();
+    _initialized = false;
+  }
+
   void _trimEntries() {
     if (_entries.length <= _maxEntries) return;
     _entries.removeRange(0, _entries.length - _maxEntries);

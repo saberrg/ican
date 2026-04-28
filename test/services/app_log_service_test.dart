@@ -7,6 +7,7 @@ void main() {
 
   test('app log service redacts key material before persistence', () async {
     SharedPreferences.setMockInitialValues({});
+    AppLogService.instance.resetForTesting();
     await AppLogService.instance.init();
     final queryKey = 'abcde' * 6;
     final googleKey =
