@@ -1,0 +1,56 @@
+name: iOS TestFlight Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Next iOS build number, greater than the latest TestFlight build"
+        required: true
+        type: string
+      release_notes:
+        description: "Optional TestFlight release notes"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-release
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Build and upload TestFlight
+    runs-on: [self-hosted, macOS, ican-ios]
+    timeout-minutes: 90
+    environment: testflight
+    env:
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+      IOS_BUNDLE_IDENTIFIER: com.icannavigation.app
+      ICAN_API_KEY: ${{ secrets.ICAN_API_KEY }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_CONTENT_BASE64: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+      ELEVENLABS_TTS_WORKER_URL: ${{ secrets.ELEVENLABS_TTS_WORKER_URL }}
+      ICAN_ALLOW_BOOTSTRAP: "1"
+      ICAN_DOWNLOAD_COREML: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Prepare release scripts
+        shell: bash
+        run: chmod +x scripts/macos_setup.sh scripts/macos_release.sh
+
+      - name: Verify Mac runner
+        shell: bash
+        run: ./scripts/macos_setup.sh --ci
+
+      - name: Build and upload
+        shell: bash
+        run: ./scripts/macos_release.sh "$BUILD_NUMBER"

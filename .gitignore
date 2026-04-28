@@ -71,6 +71,15 @@ secret.json
 *.local.md
 LOCAL_PRIVATE*.md
 work/
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+release.env
+.release.env
+ios/fastlane/.env*
 
 # Android
 **/android/**/gradle-wrapper.jar
@@ -100,6 +109,14 @@ work/
 
 # Visual Studio
 .vs/
+
+# Ruby/Fastlane
+vendor/bundle/
+ios/fastlane/report.xml
+ios/fastlane/Preview.html
+ios/fastlane/screenshots/
+ios/fastlane/test_output/
+ios/fastlane/logs/
 
 # Test captures
 captures/

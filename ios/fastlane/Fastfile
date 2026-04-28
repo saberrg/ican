@@ -1,0 +1,52 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Validate, build, and upload iCan to TestFlight"
+  lane :testflight do |options|
+    build_number = options[:build_number] || ENV["BUILD_NUMBER"]
+    release_notes = options[:release_notes] || ENV["RELEASE_NOTES"]
+
+    UI.user_error!("BUILD_NUMBER is required") if build_number.to_s.strip.empty?
+    required_env = %w[
+      ICAN_API_KEY
+      ASC_KEY_ID
+      ASC_ISSUER_ID
+      ASC_KEY_CONTENT_BASE64
+    ]
+    required_env.each do |name|
+      UI.user_error!("#{name} is required") if ENV[name].to_s.strip.empty?
+    end
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT_BASE64"],
+      is_key_content_base64: true,
+      in_house: false
+    )
+
+    flutter = ENV["FLUTTER_BIN"].to_s.strip.empty? ? "flutter" : ENV["FLUTTER_BIN"]
+    bundle_id = ENV["IOS_BUNDLE_IDENTIFIER"].to_s.strip.empty? ? "com.icannavigation.app" : ENV["IOS_BUNDLE_IDENTIFIER"]
+    tts_define = ""
+    unless ENV["ELEVENLABS_TTS_WORKER_URL"].to_s.strip.empty?
+      tts_define = " --dart-define=ELEVENLABS_TTS_WORKER_URL=\"$ELEVENLABS_TTS_WORKER_URL\""
+    end
+
+    Dir.chdir("..") do
+      sh("#{flutter} --version")
+      sh("#{flutter} pub get")
+      sh("dart format --output=none --set-exit-if-changed lib test")
+      sh("#{flutter} analyze --no-fatal-infos --fatal-warnings")
+      sh("#{flutter} test --no-pub")
+      sh("rm -rf build/ios/archive build/ios/ipa")
+      sh("#{flutter} build ipa --release --build-number=#{build_number} --export-method app-store --dart-define=API_KEY=\"$ICAN_API_KEY\" --dart-define=IOS_BUNDLE_IDENTIFIER=#{bundle_id}#{tts_define}")
+    end
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: "../build/ios/ipa/iCan.ipa",
+      changelog: release_notes.to_s.strip.empty? ? nil : release_notes,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
