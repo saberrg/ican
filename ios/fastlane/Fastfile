@@ -1,5 +1,7 @@
 default_platform(:ios)
 
+repo_root = File.expand_path("../..", __dir__)
+
 platform :ios do
   desc "Validate, build, and upload iCan to TestFlight"
   lane :testflight do |options|
@@ -32,19 +34,52 @@ platform :ios do
       tts_define = " --dart-define=ELEVENLABS_TTS_WORKER_URL=\"$ELEVENLABS_TTS_WORKER_URL\""
     end
 
-    Dir.chdir("..") do
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: bundle_id,
+      team_id: "YP6X8QPR44",
+      force: true
+    )
+    profile_name = lane_context[SharedValues::SIGH_NAME]
+    export_options_path = File.join(repo_root, "ios/ExportOptions.generated.plist")
+    File.write(export_options_path, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+          <key>method</key>
+          <string>app-store</string>
+          <key>teamID</key>
+          <string>YP6X8QPR44</string>
+          <key>signingStyle</key>
+          <string>manual</string>
+          <key>provisioningProfiles</key>
+          <dict>
+              <key>#{bundle_id}</key>
+              <string>#{profile_name}</string>
+          </dict>
+          <key>uploadBitcode</key>
+          <false/>
+          <key>uploadSymbols</key>
+          <true/>
+      </dict>
+      </plist>
+    PLIST
+
+    Dir.chdir(repo_root) do
       sh("#{flutter} --version")
       sh("#{flutter} pub get")
       sh("dart format --output=none --set-exit-if-changed lib test")
       sh("#{flutter} analyze --no-fatal-infos --fatal-warnings")
       sh("#{flutter} test --no-pub")
       sh("rm -rf build/ios/archive build/ios/ipa")
-      sh("#{flutter} build ipa --release --build-number=#{build_number} --export-method app-store --dart-define=API_KEY=\"$ICAN_API_KEY\" --dart-define=IOS_BUNDLE_IDENTIFIER=#{bundle_id}#{tts_define}")
+      sh("#{flutter} build ipa --release --build-number=#{build_number} --export-options-plist=#{export_options_path} --dart-define=API_KEY=\"$ICAN_API_KEY\" --dart-define=IOS_BUNDLE_IDENTIFIER=#{bundle_id}#{tts_define}")
     end
 
     upload_to_testflight(
       api_key: api_key,
-      ipa: "../build/ios/ipa/iCan.ipa",
+      ipa: File.join(repo_root, "build/ios/ipa/iCan.ipa"),
       changelog: release_notes.to_s.strip.empty? ? nil : release_notes,
       skip_waiting_for_build_processing: true
     )
