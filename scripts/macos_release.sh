@@ -29,6 +29,7 @@ required_env=(
   ASC_KEY_ID
   ASC_ISSUER_ID
   ASC_KEY_CONTENT_BASE64
+  MACOS_KEYCHAIN_PASSWORD
 )
 
 for name in "${required_env[@]}"; do
@@ -80,6 +81,24 @@ configure_ruby() {
   export PATH="$gem_user_dir/bin:$(ruby -e 'require "rubygems"; print Gem.bindir'):$PATH"
 }
 
+unlock_signing_keychain() {
+  local keychain="${MACOS_KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
+  if [[ ! -f "$keychain" ]]; then
+    keychain="${MACOS_KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain}"
+  fi
+  if [[ ! -f "$keychain" ]]; then
+    printf 'ERROR: signing keychain not found. Set MACOS_KEYCHAIN_PATH if it is not the login keychain.\n' >&2
+    exit 1
+  fi
+
+  printf '==> Unlocking signing keychain\n'
+  security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
+  security set-keychain-settings -lut 21600 "$keychain"
+  security list-keychains -d user -s "$keychain"
+  security default-keychain -d user -s "$keychain"
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$keychain" >/dev/null
+}
+
 find_flutter() {
   if [[ -n "${FLUTTER_BIN:-}" ]]; then
     [[ -x "$FLUTTER_BIN" ]] || {
@@ -114,6 +133,7 @@ find_flutter() {
 
 find_flutter
 configure_ruby
+unlock_signing_keychain
 
 printf '==> Scanning tracked files for credential material\n'
 set +e

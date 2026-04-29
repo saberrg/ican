@@ -65,6 +65,7 @@ Add these to GitHub Actions secrets for the `x` environment or the repo:
 - `ASC_KEY_ID`
 - `ASC_ISSUER_ID`
 - `ASC_KEY_CONTENT_BASE64`
+- `MACOS_KEYCHAIN_PASSWORD`
 - Optional: `ELEVENLABS_TTS_WORKER_URL`
 
 Do not commit `.env`, `.p8`, `.p12`, `.cer`, provisioning profiles, private
