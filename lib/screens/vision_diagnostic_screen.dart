@@ -59,6 +59,8 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       final appleVision = nativeReady && await _vision.isAppleVisionAvailable();
       final offline = await _vision.getOfflineVisionStatus();
       final nativeModels = await _vision.getOfflineVisionDiagnostics();
+      final readinessSnapshot = await _vision
+          .getSmolVlmReadinessSupportSnapshot();
       var smolVlmLoad = 'skipped';
       if (offline.modelStatus == ModelStatus.loaded) {
         smolVlmLoad = 'already loaded';
@@ -78,6 +80,8 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
         'Depth Anything: ${offline.depthEstimationAvailable ? 'ready' : 'unavailable'}',
         'YOLO detail: ${nativeModels.objectDetector.message}',
         'Depth detail: ${nativeModels.depthEstimator.message}',
+        'SmolVLM2 readiness snapshot:',
+        readinessSnapshot,
       ]);
     } catch (e) {
       lines.add('Native diagnostics failed: $e');

@@ -266,7 +266,10 @@ class SceneDescriptionService extends ChangeNotifier {
       }
     }
 
-    if (await _loadSmolVlmIfUsable()) {
+    if (await _isSmolVlmReadyForDescribe(
+      imageBytes,
+      systemPrompt: prompt.systemPrompt,
+    )) {
       final text = await _tryLocalGeneratedText(
         label: 'SmolVLM2',
         backend: VisionBackend.vlm,
@@ -345,7 +348,6 @@ class SceneDescriptionService extends ChangeNotifier {
   }
 
   static const Duration _localGenerationTimeout = Duration(seconds: 45);
-  static const Duration _localModelLoadTimeout = Duration(seconds: 20);
 
   Future<bool> _isFoundationModelsUsable() async {
     try {
@@ -356,25 +358,21 @@ class SceneDescriptionService extends ChangeNotifier {
     }
   }
 
-  Future<bool> _loadSmolVlmIfUsable() async {
+  Future<bool> _isSmolVlmReadyForDescribe(
+    Uint8List imageBytes, {
+    required String systemPrompt,
+  }) async {
     try {
-      final status = await onDeviceService.getModelStatus();
-      switch (status) {
-        case ModelStatus.loaded:
-          return true;
-        case ModelStatus.ready:
-          return await onDeviceService.loadVlmModel().timeout(
-            _localModelLoadTimeout,
-            onTimeout: () => false,
-          );
-        case ModelStatus.notAvailable:
-        case ModelStatus.notDownloaded:
-        case ModelStatus.downloading:
-          debugPrint('[SceneDescription] SmolVLM2 unavailable: ${status.name}');
-          return false;
+      final ready = await onDeviceService.isSmolVlmReadyForDescribe(
+        imageBytes,
+        systemPrompt: systemPrompt,
+      );
+      if (!ready) {
+        debugPrint('[SceneDescription] SmolVLM2 readiness probe not passed');
       }
+      return ready;
     } catch (e) {
-      debugPrint('[SceneDescription] SmolVLM2 status/load failed: $e');
+      debugPrint('[SceneDescription] SmolVLM2 readiness check failed: $e');
       return false;
     }
   }
@@ -525,23 +523,12 @@ class SceneDescriptionService extends ChangeNotifier {
     Uint8List imageBytes, {
     required String systemPrompt,
   }) async* {
-    final status = await onDeviceService.getModelStatus();
-    if (status == ModelStatus.notAvailable) {
-      throw StateError('SmolVLM2 runtime is not linked into this build.');
-    }
-    if (status == ModelStatus.notDownloaded) {
-      throw StateError('SmolVLM2 model files are not downloaded.');
-    }
-    if (status == ModelStatus.downloading) {
-      throw StateError('SmolVLM2 model download is still in progress.');
-    }
-    if (status == ModelStatus.ready) {
-      final loaded = await onDeviceService.loadVlmModel();
-      if (!loaded) {
-        throw StateError(
-          'SmolVLM2 model files are present but failed to load.',
-        );
-      }
+    final ready = await onDeviceService.isSmolVlmReadyForDescribe(
+      imageBytes,
+      systemPrompt: systemPrompt,
+    );
+    if (!ready) {
+      throw StateError('SmolVLM2 has not passed the readiness probe.');
     }
     yield* _describeWithVlm(
       imageBytes,

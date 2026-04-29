@@ -1,4 +1,6 @@
 import Foundation
+import Darwin
+import os
 import UIKit
 
 #if canImport(llama)
@@ -23,8 +25,13 @@ final class LlamaService {
     private var llamaCtx:   OpaquePointer?
     private var mtmdCtx:    OpaquePointer?
     private var isLoaded    = false
+    private var memoryWarningCount = 0
 
     private init() {}
+
+    func noteMemoryWarning() {
+        memoryWarningCount += 1
+    }
 
     // MARK: - Status
 
@@ -40,6 +47,17 @@ final class LlamaService {
         let projPath = dir.appendingPathComponent(Self.visionProjectorFilename).path
         return FileManager.default.fileExists(atPath: textPath)
             && FileManager.default.fileExists(atPath: projPath)
+    }
+
+    func readinessContext() -> [String: Any] {
+        [
+            "runtimeLinked": true,
+            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "buildNumber": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "osVersion": "iOS \(UIDevice.current.systemVersion)",
+            "deviceModel": Self.deviceModelIdentifier(),
+            "files": ModelDownloadManager.shared.getModelFileIntegrityReport(verifyHash: false),
+        ]
     }
 
     static func modelsDirectory() -> URL {
@@ -112,12 +130,16 @@ final class LlamaService {
     func runSelfTest(jpegData: Data, systemPrompt: String) async -> [String: Any] {
         let startedAt = Date()
         let directory = Self.modelsDirectory()
+        let warningCountBefore = memoryWarningCount
         var report: [String: Any] = [
             "llamaLinked": true,
+            "runtimeLinked": true,
             "modelsDirectory": directory.path,
             "modelStatusBefore": getModelStatus(),
             "jpegBytes": jpegData.count,
             "jpegDecodeSuccess": UIImage(data: jpegData)?.cgImage != nil,
+            "memoryBeforeBytes": Self.availableMemoryBytes(),
+            "memoryWarningCountBefore": warningCountBefore,
             "textModel": Self.fileReport(filename: Self.textModelFilename),
             "visionProjector": Self.fileReport(filename: Self.visionProjectorFilename),
             "downloadInfo": ModelDownloadManager.shared.getModelInfo(),
@@ -127,6 +149,7 @@ final class LlamaService {
         let loaded = await loadModel()
         report["loadSuccess"] = loaded
         report["loadLatencyMs"] = Self.elapsedMs(since: loadStartedAt)
+        report["memoryAfterLoadBytes"] = Self.availableMemoryBytes()
         report["modelStatusAfterLoad"] = getModelStatus()
 
         guard loaded,
@@ -137,6 +160,8 @@ final class LlamaService {
             report["stage"] = "load"
             report["error"] = "SmolVLM2 did not load. Check linked runtime, file sizes, hashes, memory, and Metal availability."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
 
@@ -154,6 +179,8 @@ final class LlamaService {
             report["bitmapDecodeLatencyMs"] = Self.elapsedMs(since: bitmapStartedAt)
             report["error"] = "mtmd failed to decode the JPEG."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
         defer { mtmd_bitmap_free(bitmap) }
@@ -172,6 +199,8 @@ final class LlamaService {
             report["tokenizeResult"] = -999
             report["error"] = "Failed to allocate mtmd input chunks."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
         defer { mtmd_input_chunks_free(chunks) }
@@ -194,6 +223,8 @@ final class LlamaService {
             report["stage"] = "tokenize"
             report["error"] = "mtmd_tokenize failed with code \(tokenizeResult)."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
 
@@ -206,6 +237,8 @@ final class LlamaService {
             report["stage"] = "image_eval"
             report["error"] = "mtmd image eval failed with code \(evalResult)."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
 
@@ -214,6 +247,8 @@ final class LlamaService {
             report["stage"] = "sampler"
             report["error"] = "Failed to create llama sampler."
             report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+            report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
             return report
         }
         defer { llama_sampler_free(sampler) }
@@ -262,12 +297,54 @@ final class LlamaService {
         report["generationLatencyMs"] = Self.elapsedMs(since: generationStartedAt)
         report["decodeResult"] = decodeResult
         report["outputPreview"] = String(output.prefix(240))
+        report["sanitizedOutput"] = Self.sanitizeReadinessOutput(output)
         report["stage"] = outputTokenCount > 0 ? "complete" : "generation"
         if outputTokenCount == 0 {
             report["error"] = "SmolVLM2 completed eval but produced no text tokens."
         }
         report["totalLatencyMs"] = Self.elapsedMs(since: startedAt)
+        report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+        report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
         return report
+    }
+
+    func runReadinessProbe(jpegData: Data, systemPrompt: String) async -> [String: Any] {
+        let startedAt = Date()
+        let warningCountBefore = memoryWarningCount
+        var report = readinessContext()
+        let files = ModelDownloadManager.shared.getModelFileIntegrityReport(verifyHash: true)
+        let filesPresent = files.allSatisfy {
+            ($0["present"] as? Bool) == true && ($0["sizeMatches"] as? Bool) == true
+        }
+        let shaVerified = files.allSatisfy {
+            ($0["shaVerified"] as? Bool) == true && ($0["valid"] as? Bool) == true
+        }
+
+        report["files"] = files
+        report["runtimeLinked"] = true
+        report["filesPresent"] = filesPresent
+        report["shaVerified"] = shaVerified
+        report["loadSuccess"] = false
+        report["jpegBytes"] = jpegData.count
+        report["memoryBeforeBytes"] = Self.availableMemoryBytes()
+        report["memoryWarningCountBefore"] = warningCountBefore
+
+        if !filesPresent || !shaVerified || Self.intValue(report["memoryBeforeBytes"]) < 1_100_000_000 {
+            return Self.finishReadinessReport(report, startedAt: startedAt)
+        }
+
+        let selfTest = await runSelfTest(jpegData: jpegData, systemPrompt: systemPrompt)
+        for (key, value) in selfTest {
+            report[key] = value
+        }
+        report["files"] = files
+        report["filesPresent"] = filesPresent
+        report["shaVerified"] = shaVerified
+        report["memoryWarningDuringProbe"] = memoryWarningCount != warningCountBefore
+        if report["memoryAfterInferenceBytes"] == nil {
+            report["memoryAfterInferenceBytes"] = Self.availableMemoryBytes()
+        }
+        return Self.finishReadinessReport(report, startedAt: startedAt)
     }
 
     // MARK: - Inference
@@ -427,6 +504,111 @@ final class LlamaService {
     private static func elapsedMs(since start: Date) -> Int {
         Int(Date().timeIntervalSince(start) * 1000)
     }
+
+    private static func finishReadinessReport(_ input: [String: Any], startedAt: Date) -> [String: Any] {
+        var report = input
+        report["totalLatencyMs"] = report["totalLatencyMs"] ?? elapsedMs(since: startedAt)
+        report["memoryAfterLoadBytes"] = report["memoryAfterLoadBytes"] ?? availableMemoryBytes()
+        report["memoryAfterInferenceBytes"] = report["memoryAfterInferenceBytes"] ?? availableMemoryBytes()
+        let failure = readinessFailureReason(report)
+        report["passed"] = failure == nil
+        report["failureReason"] = failure ?? ""
+        return report
+    }
+
+    private static func readinessFailureReason(_ report: [String: Any]) -> String? {
+        let memoryBefore = intValue(report["memoryBeforeBytes"])
+        let memoryAfterLoad = intValue(report["memoryAfterLoadBytes"])
+        let memoryAfterInference = intValue(report["memoryAfterInferenceBytes"])
+        let loadLatency = intValue(report["loadLatencyMs"])
+        let firstTokenLatency = intValue(report["firstTokenLatencyMs"])
+        let totalLatency = intValue(report["totalLatencyMs"])
+        let tokenCount = intValue(report["tokenCount"])
+        let output = report["sanitizedOutput"] as? String ?? report["outputPreview"] as? String ?? ""
+
+        if boolValue(report["runtimeLinked"]) == false { return "llama runtime is not linked." }
+        if boolValue(report["filesPresent"]) == false { return "SmolVLM2 model files are missing." }
+        if boolValue(report["shaVerified"]) == false { return "SmolVLM2 model files did not match expected SHA-256." }
+        if memoryBefore < 1_100_000_000 { return "Available memory before load is below 1.1 GB." }
+        if boolValue(report["loadSuccess"]) == false { return "SmolVLM2 failed to load." }
+        if loadLatency <= 0 || loadLatency > 20_000 { return "SmolVLM2 load exceeded the 20 second limit." }
+        if memoryAfterLoad < 300_000_000 || memoryAfterInference < 300_000_000 {
+            return "Available memory after probe is below 300 MB."
+        }
+        if boolValue(report["memoryWarningDuringProbe"]) == true {
+            return "iOS reported memory pressure during the SmolVLM2 probe."
+        }
+        if firstTokenLatency <= 0 || firstTokenLatency > 25_000 {
+            return "SmolVLM2 first token exceeded the 25 second limit."
+        }
+        if totalLatency <= 0 || totalLatency > 45_000 {
+            return "SmolVLM2 self-test exceeded the 45 second limit."
+        }
+        if tokenCount <= 0 || !hasUsefulReadinessOutput(output) {
+            return "SmolVLM2 output did not pass spoken quality checks."
+        }
+        return nil
+    }
+
+    private static func sanitizeReadinessOutput(_ text: String) -> String {
+        let collapsed = text.replacingOccurrences(
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !collapsed.isEmpty else { return "" }
+        if collapsed.range(of: #"[.!?]["')\]]*$"#, options: .regularExpression) != nil {
+            return collapsed
+        }
+        return collapsed + "."
+    }
+
+    private static func hasUsefulReadinessOutput(_ text: String) -> Bool {
+        let output = sanitizeReadinessOutput(text)
+        let wordRegex = try? NSRegularExpression(pattern: #"[A-Za-z0-9']+"#)
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        let words = wordRegex?.numberOfMatches(in: output, range: range) ?? 0
+        if words < 8 { return false }
+        let lower = output.lowercased()
+        let banned = #"\b(smolvlm|llama|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b"#
+        if lower.range(of: banned, options: .regularExpression) != nil { return false }
+        let tokens = lower.split { $0 == " " || $0 == "\n" || $0 == "\t" }.map(String.init)
+        guard tokens.count >= 8 else { return false }
+        for i in 0...(tokens.count - 8) {
+            if tokens[i..<(i + 4)].joined(separator: " ") == tokens[(i + 4)..<(i + 8)].joined(separator: " ") {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func boolValue(_ value: Any?) -> Bool {
+        if let bool = value as? Bool { return bool }
+        if let number = value as? NSNumber { return number.boolValue }
+        let raw = "\(value ?? "")".lowercased()
+        return raw == "true" || raw == "1" || raw == "yes"
+    }
+
+    private static func intValue(_ value: Any?) -> Int {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        return Int("\(value ?? "")") ?? 0
+    }
+
+    private static func availableMemoryBytes() -> Int {
+        let bytes = os_proc_available_memory()
+        return Int(min(bytes, UInt64(Int.max)))
+    }
+
+    private static func deviceModelIdentifier() -> String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        return mirror.children.reduce(into: "") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            identifier.append(String(UnicodeScalar(UInt8(value))))
+        }
+    }
 }
 #else
 final class LlamaService {
@@ -437,6 +619,8 @@ final class LlamaService {
     static let visionProjectorFilename = "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
 
     private init() {}
+
+    func noteMemoryWarning() {}
 
     func getModelStatus() -> String {
         "not_available"
@@ -449,6 +633,17 @@ final class LlamaService {
     static func modelsDirectory() -> URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("models", isDirectory: true)
+    }
+
+    func readinessContext() -> [String: Any] {
+        [
+            "runtimeLinked": false,
+            "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            "buildNumber": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            "osVersion": "iOS \(UIDevice.current.systemVersion)",
+            "deviceModel": Self.deviceModelIdentifier(),
+            "files": ModelDownloadManager.shared.getModelFileIntegrityReport(verifyHash: false),
+        ]
     }
 
     func loadModel() async -> Bool {
@@ -472,6 +667,7 @@ final class LlamaService {
     func runSelfTest(jpegData: Data, systemPrompt: String) async -> [String: Any] {
         [
             "llamaLinked": false,
+            "runtimeLinked": false,
             "modelsDirectory": Self.modelsDirectory().path,
             "modelStatusBefore": getModelStatus(),
             "modelStatusAfterLoad": getModelStatus(),
@@ -483,6 +679,27 @@ final class LlamaService {
             "stage": "runtime",
             "error": "SmolVLM2 is unavailable because llama.xcframework is not linked",
         ]
+    }
+
+    func runReadinessProbe(jpegData: Data, systemPrompt: String) async -> [String: Any] {
+        var report = readinessContext()
+        report["llamaLinked"] = false
+        report["runtimeLinked"] = false
+        report["filesPresent"] = false
+        report["shaVerified"] = false
+        report["loadSuccess"] = false
+        report["memoryBeforeBytes"] = 0
+        report["memoryAfterLoadBytes"] = 0
+        report["memoryAfterInferenceBytes"] = 0
+        report["loadLatencyMs"] = 0
+        report["imageEvalLatencyMs"] = 0
+        report["firstTokenLatencyMs"] = -1
+        report["totalLatencyMs"] = 0
+        report["tokenCount"] = 0
+        report["sanitizedOutput"] = ""
+        report["passed"] = false
+        report["failureReason"] = "SmolVLM2 is unavailable because llama.xcframework is not linked"
+        return report
     }
 
     private static func fileReport(filename: String) -> [String: Any] {
@@ -502,6 +719,16 @@ final class LlamaService {
             return 0
         }
         return size.uint64Value
+    }
+
+    private static func deviceModelIdentifier() -> String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        return mirror.children.reduce(into: "") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return }
+            identifier.append(String(UnicodeScalar(UInt8(value))))
+        }
     }
 }
 #endif

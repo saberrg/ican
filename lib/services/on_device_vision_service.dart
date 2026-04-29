@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_log_service.dart';
 
@@ -531,6 +533,219 @@ bool _asBool(Object? value, {bool fallback = false}) {
   return fallback;
 }
 
+Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> source) {
+  return source.map((key, value) {
+    final dynamic mappedValue = switch (value) {
+      final Map<dynamic, dynamic> map => _stringKeyedMap(map),
+      final List list =>
+        list
+            .map(
+              (item) =>
+                  item is Map<dynamic, dynamic> ? _stringKeyedMap(item) : item,
+            )
+            .toList(),
+      _ => value,
+    };
+    return MapEntry(key.toString(), mappedValue);
+  });
+}
+
+class SmolVlmReadinessReport {
+  const SmolVlmReadinessReport({
+    required this.runtimeLinked,
+    required this.filesPresent,
+    required this.shaVerified,
+    required this.loadSuccess,
+    required this.memoryBeforeBytes,
+    required this.memoryAfterLoadBytes,
+    required this.memoryAfterInferenceBytes,
+    required this.loadLatencyMs,
+    required this.imageEvalLatencyMs,
+    required this.firstTokenLatencyMs,
+    required this.totalLatencyMs,
+    required this.tokenCount,
+    required this.sanitizedOutput,
+    required this.passed,
+    required this.failureReason,
+    required this.raw,
+  });
+
+  factory SmolVlmReadinessReport.fromMap(Map<dynamic, dynamic> map) {
+    final raw = _stringKeyedMap(map);
+    final sanitizedOutput =
+        raw['sanitizedOutput']?.toString() ??
+        raw['outputPreview']?.toString() ??
+        '';
+    final base = SmolVlmReadinessReport(
+      runtimeLinked: _asBool(raw['runtimeLinked'] ?? raw['llamaLinked']),
+      filesPresent: _asBool(raw['filesPresent']),
+      shaVerified: _asBool(raw['shaVerified']),
+      loadSuccess: _asBool(raw['loadSuccess']),
+      memoryBeforeBytes: _asInt(raw['memoryBeforeBytes']),
+      memoryAfterLoadBytes: _asInt(raw['memoryAfterLoadBytes']),
+      memoryAfterInferenceBytes: _asInt(raw['memoryAfterInferenceBytes']),
+      loadLatencyMs: _asInt(raw['loadLatencyMs']),
+      imageEvalLatencyMs: _asInt(raw['imageEvalLatencyMs']),
+      firstTokenLatencyMs: _asInt(raw['firstTokenLatencyMs']),
+      totalLatencyMs: _asInt(raw['totalLatencyMs']),
+      tokenCount: _asInt(raw['tokenCount']),
+      sanitizedOutput: sanitizedOutput,
+      passed: _asBool(raw['passed']),
+      failureReason:
+          raw['failureReason']?.toString() ?? raw['error']?.toString() ?? '',
+      raw: raw,
+    );
+    return base._enforceDartGates();
+  }
+
+  factory SmolVlmReadinessReport.failed(
+    String failureReason, {
+    Map<String, Object?> raw = const {},
+  }) {
+    return SmolVlmReadinessReport.fromMap({
+      ...raw,
+      'runtimeLinked': raw['runtimeLinked'] ?? false,
+      'filesPresent': raw['filesPresent'] ?? false,
+      'shaVerified': raw['shaVerified'] ?? false,
+      'loadSuccess': raw['loadSuccess'] ?? false,
+      'memoryBeforeBytes': raw['memoryBeforeBytes'] ?? 0,
+      'memoryAfterLoadBytes': raw['memoryAfterLoadBytes'] ?? 0,
+      'memoryAfterInferenceBytes': raw['memoryAfterInferenceBytes'] ?? 0,
+      'loadLatencyMs': raw['loadLatencyMs'] ?? 0,
+      'imageEvalLatencyMs': raw['imageEvalLatencyMs'] ?? 0,
+      'firstTokenLatencyMs': raw['firstTokenLatencyMs'] ?? -1,
+      'totalLatencyMs': raw['totalLatencyMs'] ?? 0,
+      'tokenCount': raw['tokenCount'] ?? 0,
+      'sanitizedOutput': raw['sanitizedOutput'] ?? '',
+      'passed': false,
+      'failureReason': failureReason,
+    });
+  }
+
+  static const int minimumMemoryBeforeBytes = 1100 * 1000 * 1000;
+  static const int minimumMemoryAfterBytes = 300 * 1000 * 1000;
+  static const int maximumLoadLatencyMs = 20000;
+  static const int maximumFirstTokenLatencyMs = 25000;
+  static const int maximumTotalLatencyMs = 45000;
+
+  final bool runtimeLinked;
+  final bool filesPresent;
+  final bool shaVerified;
+  final bool loadSuccess;
+  final int memoryBeforeBytes;
+  final int memoryAfterLoadBytes;
+  final int memoryAfterInferenceBytes;
+  final int loadLatencyMs;
+  final int imageEvalLatencyMs;
+  final int firstTokenLatencyMs;
+  final int totalLatencyMs;
+  final int tokenCount;
+  final String sanitizedOutput;
+  final bool passed;
+  final String failureReason;
+  final Map<String, dynamic> raw;
+
+  Map<String, dynamic> toJson() {
+    return {
+      ...raw,
+      'runtimeLinked': runtimeLinked,
+      'filesPresent': filesPresent,
+      'shaVerified': shaVerified,
+      'loadSuccess': loadSuccess,
+      'memoryBeforeBytes': memoryBeforeBytes,
+      'memoryAfterLoadBytes': memoryAfterLoadBytes,
+      'memoryAfterInferenceBytes': memoryAfterInferenceBytes,
+      'loadLatencyMs': loadLatencyMs,
+      'imageEvalLatencyMs': imageEvalLatencyMs,
+      'firstTokenLatencyMs': firstTokenLatencyMs,
+      'totalLatencyMs': totalLatencyMs,
+      'tokenCount': tokenCount,
+      'sanitizedOutput': sanitizedOutput,
+      'passed': passed,
+      'failureReason': failureReason,
+    };
+  }
+
+  SmolVlmReadinessReport _enforceDartGates() {
+    final reason = _firstGateFailure();
+    if (reason == null && passed) return this;
+    return SmolVlmReadinessReport(
+      runtimeLinked: runtimeLinked,
+      filesPresent: filesPresent,
+      shaVerified: shaVerified,
+      loadSuccess: loadSuccess,
+      memoryBeforeBytes: memoryBeforeBytes,
+      memoryAfterLoadBytes: memoryAfterLoadBytes,
+      memoryAfterInferenceBytes: memoryAfterInferenceBytes,
+      loadLatencyMs: loadLatencyMs,
+      imageEvalLatencyMs: imageEvalLatencyMs,
+      firstTokenLatencyMs: firstTokenLatencyMs,
+      totalLatencyMs: totalLatencyMs,
+      tokenCount: tokenCount,
+      sanitizedOutput: sanitizedOutput,
+      passed: false,
+      failureReason: failureReason.isNotEmpty
+          ? failureReason
+          : (reason ?? 'SmolVLM2 readiness probe did not pass.'),
+      raw: raw,
+    );
+  }
+
+  String? _firstGateFailure() {
+    if (!runtimeLinked) return 'llama runtime is not linked.';
+    if (!filesPresent) return 'SmolVLM2 model files are missing.';
+    if (!shaVerified) {
+      return 'SmolVLM2 model files did not match expected SHA-256.';
+    }
+    if (memoryBeforeBytes < minimumMemoryBeforeBytes) {
+      return 'Available memory before load is below 1.1 GB.';
+    }
+    if (!loadSuccess) return 'SmolVLM2 failed to load.';
+    if (loadLatencyMs <= 0 || loadLatencyMs > maximumLoadLatencyMs) {
+      return 'SmolVLM2 load exceeded the 20 second limit.';
+    }
+    if (memoryAfterLoadBytes < minimumMemoryAfterBytes ||
+        memoryAfterInferenceBytes < minimumMemoryAfterBytes) {
+      return 'Available memory after probe is below 300 MB.';
+    }
+    if (firstTokenLatencyMs <= 0 ||
+        firstTokenLatencyMs > maximumFirstTokenLatencyMs) {
+      return 'SmolVLM2 first token exceeded the 25 second limit.';
+    }
+    if (totalLatencyMs <= 0 || totalLatencyMs > maximumTotalLatencyMs) {
+      return 'SmolVLM2 self-test exceeded the 45 second limit.';
+    }
+    if (tokenCount <= 0 || !_hasUsefulSpokenOutput(sanitizedOutput)) {
+      return 'SmolVLM2 output did not pass spoken quality checks.';
+    }
+    if (_asBool(raw['memoryWarningDuringProbe'])) {
+      return 'iOS reported memory pressure during the SmolVLM2 probe.';
+    }
+    return null;
+  }
+
+  static bool _hasUsefulSpokenOutput(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) return false;
+    final words = RegExp(r"[A-Za-z0-9']+").allMatches(normalized).length;
+    if (words < 8) return false;
+    if (!RegExp(r'''[.!?]["')\]]*$''').hasMatch(normalized)) return false;
+    final lower = normalized.toLowerCase();
+    if (RegExp(
+      r'\b(smolvlm|llama|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b',
+    ).hasMatch(lower)) {
+      return false;
+    }
+    final tokens = lower.split(RegExp(r'\s+'));
+    for (var i = 0; i + 7 < tokens.length; i++) {
+      final phrase = tokens.sublist(i, i + 4).join(' ');
+      final next = tokens.sublist(i + 4, i + 8).join(' ');
+      if (phrase == next) return false;
+    }
+    return true;
+  }
+}
+
 String _asNonEmptyString(Object? value, {required String fallback}) {
   final text = value?.toString().trim() ?? '';
   return text.isEmpty ? fallback : text;
@@ -575,6 +790,9 @@ class OnDeviceVisionService {
     'com.ican/model_download_progress',
   );
   static const _firstNativeTokenTimeout = Duration(seconds: 120);
+  static const _readinessPrefsKey = 'smol_vlm_readiness_capability_v1';
+  static const _lastReadinessPrefsKey = 'smol_vlm_readiness_last_report_v1';
+  static final Set<String> _failedReadinessKeys = <String>{};
 
   Future<bool> pingNativeChannel() async {
     try {
@@ -911,6 +1129,104 @@ class OnDeviceVisionService {
     }
   }
 
+  Future<bool> isSmolVlmReadyForDescribe(
+    Uint8List jpegBytes, {
+    String systemPrompt =
+        'Describe this image in one concise sentence for a blind user.',
+  }) async {
+    final context = await _getSmolVlmReadinessContext();
+    final cacheKey = _smolVlmReadinessCacheKey(context);
+    if (_failedReadinessKeys.contains(cacheKey)) return false;
+
+    final cached = await _loadCachedSmolVlmReadiness(cacheKey);
+    if (cached != null && cached.passed) return true;
+
+    final report = await runSmolVlmReadinessProbe(
+      jpegBytes,
+      systemPrompt: systemPrompt,
+      context: context,
+      cacheKey: cacheKey,
+    );
+    return report.passed;
+  }
+
+  Future<SmolVlmReadinessReport> runSmolVlmReadinessProbe(
+    Uint8List jpegBytes, {
+    String systemPrompt =
+        'Describe this image in one concise sentence for a blind user.',
+    Map<String, dynamic>? context,
+    String? cacheKey,
+  }) async {
+    final readinessContext = context ?? await _getSmolVlmReadinessContext();
+    final key = cacheKey ?? _smolVlmReadinessCacheKey(readinessContext);
+
+    if (!isLikelyValidJpeg(jpegBytes)) {
+      final report = SmolVlmReadinessReport.failed(
+        'Readiness probe image is corrupt or incomplete.',
+        raw: {
+          ...readinessContext,
+          'jpegBytes': jpegBytes.length,
+          'runtimeLinked': readinessContext['runtimeLinked'] ?? false,
+        },
+      );
+      await _storeSmolVlmReadinessReport(key, report);
+      return report;
+    }
+
+    try {
+      final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
+        'runSmolVlmReadinessProbe',
+        {'imageBytes': jpegBytes, 'systemPrompt': systemPrompt},
+      );
+      final report = SmolVlmReadinessReport.fromMap({
+        ...readinessContext,
+        ...?result,
+      });
+      await _storeSmolVlmReadinessReport(key, report);
+      return report;
+    } on MissingPluginException {
+      final report = SmolVlmReadinessReport.failed(
+        'Native vision channel is not registered.',
+        raw: {...readinessContext, 'runtimeLinked': false},
+      );
+      await _storeSmolVlmReadinessReport(key, report);
+      return report;
+    } on PlatformException catch (e) {
+      final report = SmolVlmReadinessReport.failed(
+        _platformDetail(e),
+        raw: {...readinessContext, 'runtimeLinked': false},
+      );
+      await _storeSmolVlmReadinessReport(key, report);
+      return report;
+    } catch (e) {
+      final report = SmolVlmReadinessReport.failed(
+        e.toString(),
+        raw: readinessContext,
+      );
+      await _storeSmolVlmReadinessReport(key, report);
+      return report;
+    }
+  }
+
+  Future<String> getSmolVlmReadinessSupportSnapshot() async {
+    final context = await _getSmolVlmReadinessContext();
+    final cacheKey = _smolVlmReadinessCacheKey(context);
+    final cached = await _loadCachedSmolVlmReadiness(cacheKey);
+    final payload = <String, dynamic>{
+      'cacheKey': cacheKey,
+      'context': context,
+      'readiness':
+          cached?.toJson() ??
+          {
+            'passed': false,
+            'failureReason': 'No cached SmolVLM2 readiness probe report.',
+          },
+    };
+    return const JsonEncoder.withIndent(
+      '  ',
+    ).convert(_redactLocalPaths(payload));
+  }
+
   Future<void> unloadVlmModel() async {
     try {
       await _method.invokeMethod<bool>('unloadModel');
@@ -1046,6 +1362,88 @@ class OnDeviceVisionService {
     }
   }
 
+  Future<Map<String, dynamic>> _getSmolVlmReadinessContext() async {
+    try {
+      final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
+        'getSmolVlmReadinessContext',
+      );
+      return _stringKeyedMap(result ?? const {});
+    } on MissingPluginException {
+      return {
+        'runtimeLinked': false,
+        'failureReason': 'Native vision channel is not registered.',
+      };
+    } catch (e) {
+      return {'runtimeLinked': false, 'failureReason': e.toString()};
+    }
+  }
+
+  String _smolVlmReadinessCacheKey(Map<String, dynamic> context) {
+    final files = context['files'] is List
+        ? context['files'] as List
+        : const [];
+    final fileKey = files
+        .map((file) {
+          if (file is! Map) return file.toString();
+          return [
+            file['fileName'] ?? file['name'] ?? '',
+            file['expectedSizeBytes'] ?? '',
+            file['sha256'] ?? '',
+          ].join(':');
+        })
+        .join('|');
+    return [
+      context['appVersion'] ?? '',
+      context['buildNumber'] ?? '',
+      context['osVersion'] ?? '',
+      context['deviceModel'] ?? '',
+      fileKey,
+    ].join('::');
+  }
+
+  Future<SmolVlmReadinessReport?> _loadCachedSmolVlmReadiness(
+    String cacheKey,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_readinessPrefsKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || decoded['cacheKey'] != cacheKey) return null;
+      final reportMap = decoded['report'];
+      if (reportMap is! Map) return null;
+      return SmolVlmReadinessReport.fromMap(reportMap);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _storeSmolVlmReadinessReport(
+    String cacheKey,
+    SmolVlmReadinessReport report,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final redactedReport = _redactLocalPaths(report.toJson());
+      await prefs.setString(
+        _lastReadinessPrefsKey,
+        jsonEncode({'cacheKey': cacheKey, 'report': redactedReport}),
+      );
+      if (report.passed) {
+        _failedReadinessKeys.remove(cacheKey);
+        await prefs.setString(
+          _readinessPrefsKey,
+          jsonEncode({'cacheKey': cacheKey, 'report': redactedReport}),
+        );
+      } else {
+        _failedReadinessKeys.add(cacheKey);
+        await prefs.remove(_readinessPrefsKey);
+      }
+    } catch (e) {
+      debugPrint('[OnDeviceVision] Failed to store SmolVLM readiness: $e');
+    }
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────
 
   Stream<String> _invokeTokenStream({
@@ -1162,24 +1560,6 @@ class OnDeviceVisionService {
     );
   }
 
-  static Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> source) {
-    return source.map((key, value) {
-      final dynamic mappedValue = switch (value) {
-        final Map<dynamic, dynamic> map => _stringKeyedMap(map),
-        final List list =>
-          list
-              .map(
-                (item) => item is Map<dynamic, dynamic>
-                    ? _stringKeyedMap(item)
-                    : item,
-              )
-              .toList(),
-        _ => value,
-      };
-      return MapEntry(key.toString(), mappedValue);
-    });
-  }
-
   static String _platformDetail(PlatformException e) {
     final parts = <String>[e.code];
     final message = e.message;
@@ -1192,4 +1572,24 @@ class OnDeviceVisionService {
   static void _recordVisionLog(String message) {
     unawaited(AppLogService.instance.record(message, source: 'vision'));
   }
+}
+
+Object? _redactLocalPaths(Object? value) {
+  if (value is Map) {
+    return value.map((key, entryValue) {
+      final keyText = key.toString().toLowerCase();
+      if (keyText == 'path' || keyText.endsWith('path')) {
+        return MapEntry(key.toString(), '<redacted>');
+      }
+      return MapEntry(key.toString(), _redactLocalPaths(entryValue));
+    });
+  }
+  if (value is List) return value.map(_redactLocalPaths).toList();
+  if (value is String) {
+    return value.replaceAll(
+      RegExp(r'(/var|/private|/users|[a-z]:\\)[^\s",]+', caseSensitive: false),
+      '<redacted>',
+    );
+  }
+  return value;
 }

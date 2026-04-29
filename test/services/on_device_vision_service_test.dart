@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ican/services/on_device_vision_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Build a JPEG envelope big enough to pass `isLikelyValidJpeg`. Contents in
 /// the middle are irrelevant to the tests — only the SOI/EOI markers and the
@@ -23,6 +24,10 @@ void main() {
   const vlmChannel = EventChannel('com.ican/vlm_stream');
   const fmChannel = EventChannel('com.ican/fm_stream');
   const downloadChannel = EventChannel('com.ican/model_download_progress');
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -520,6 +525,125 @@ void main() {
       containsPair('fileName', 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf'),
     );
   });
+
+  test(
+    'readiness probe passes only when native runtime and output gates pass',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            return switch (call.method) {
+              'getSmolVlmReadinessContext' => _readinessContext,
+              'runSmolVlmReadinessProbe' => _passingReadinessReport,
+              _ => throw PlatformException(code: 'unexpected'),
+            };
+          });
+
+      final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+        _fakeJpeg(),
+      );
+
+      expect(report.passed, isTrue);
+      expect(report.runtimeLinked, isTrue);
+      expect(report.shaVerified, isTrue);
+      expect(report.sanitizedOutput, contains('clear path'));
+    },
+  );
+
+  test('readiness probe fails closed on low memory', () {
+    final report = SmolVlmReadinessReport.fromMap({
+      ..._passingReadinessReport,
+      'memoryBeforeBytes': 500000000,
+    });
+
+    expect(report.passed, isFalse);
+    expect(report.failureReason, contains('1.1 GB'));
+  });
+
+  test('readiness probe fails closed on latency timeout', () {
+    final report = SmolVlmReadinessReport.fromMap({
+      ..._passingReadinessReport,
+      'totalLatencyMs': 46000,
+    });
+
+    expect(report.passed, isFalse);
+    expect(report.failureReason, contains('45 second'));
+  });
+
+  test('readiness probe fails closed on empty or repeated output', () {
+    final empty = SmolVlmReadinessReport.fromMap({
+      ..._passingReadinessReport,
+      'tokenCount': 0,
+      'sanitizedOutput': '',
+    });
+    final repeated = SmolVlmReadinessReport.fromMap({
+      ..._passingReadinessReport,
+      'sanitizedOutput':
+          'clear path ahead now clear path ahead now clear path ahead now.',
+    });
+
+    expect(empty.passed, isFalse);
+    expect(repeated.passed, isFalse);
+  });
+
+  test('readiness probe rejects malformed JPEG before native probe', () async {
+    var calls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls++;
+          if (call.method == 'getSmolVlmReadinessContext') {
+            return _readinessContext;
+          }
+          throw PlatformException(code: 'SHOULD_NOT_REACH');
+        });
+
+    final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+      Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
+    );
+
+    expect(report.passed, isFalse);
+    expect(report.failureReason, contains('corrupt'));
+    expect(calls, 1);
+  });
+
+  test('readiness probe fails closed when native runtime is missing', () async {
+    final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+      _fakeJpeg(),
+    );
+
+    expect(report.passed, isFalse);
+    expect(report.runtimeLinked, isFalse);
+    expect(report.failureReason, contains('not registered'));
+  });
+
+  test(
+    'support snapshot redacts local paths and includes readiness fields',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            return switch (call.method) {
+              'getSmolVlmReadinessContext' => {
+                ..._readinessContext,
+                'modelsDirectory': '/Users/me/Documents/models',
+              },
+              'runSmolVlmReadinessProbe' => {
+                ..._passingReadinessReport,
+                'modelsDirectory': '/Users/me/Documents/models',
+                'textModel': {'path': '/Users/me/Documents/models/text.gguf'},
+              },
+              _ => throw PlatformException(code: 'unexpected'),
+            };
+          });
+
+      final service = OnDeviceVisionService();
+      await service.runSmolVlmReadinessProbe(_fakeJpeg());
+      final snapshot = await service.getSmolVlmReadinessSupportSnapshot();
+
+      expect(snapshot, contains('"runtimeLinked": true'));
+      expect(snapshot, contains('"passed": true'));
+      expect(snapshot, isNot(contains('/Users/me')));
+      expect(snapshot, contains('<redacted>'));
+    },
+  );
 }
 
 const _diagnostics = {
@@ -565,4 +689,46 @@ const _modelInfo = {
           '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
     },
   ],
+};
+
+const _readinessContext = {
+  'runtimeLinked': true,
+  'appVersion': '1.0.0',
+  'buildNumber': '29',
+  'osVersion': 'iOS 26.4.1',
+  'deviceModel': 'iPhone14,3',
+  'files': [
+    {
+      'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+      'expectedSizeBytes': 436807568,
+      'sha256':
+          '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
+    },
+    {
+      'fileName': 'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+      'expectedSizeBytes': 108785184,
+      'sha256':
+          '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
+    },
+  ],
+};
+
+const _passingReadinessReport = {
+  'runtimeLinked': true,
+  'filesPresent': true,
+  'shaVerified': true,
+  'loadSuccess': true,
+  'memoryBeforeBytes': 1500000000,
+  'memoryAfterLoadBytes': 500000000,
+  'memoryAfterInferenceBytes': 450000000,
+  'memoryWarningDuringProbe': false,
+  'loadLatencyMs': 5000,
+  'imageEvalLatencyMs': 4000,
+  'firstTokenLatencyMs': 12000,
+  'totalLatencyMs': 30000,
+  'tokenCount': 16,
+  'sanitizedOutput':
+      'A hallway has a clear path ahead with an exit sign nearby.',
+  'passed': true,
+  'failureReason': '',
 };

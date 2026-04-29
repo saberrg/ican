@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -83,6 +85,8 @@ void main() {
     expect(clipboardText, contains('iCan Eye diagnostics'));
     expect(clipboardText, contains('Image quality: dim,low_contrast'));
     expect(clipboardText, contains('SmolVLM2 load: loaded successfully'));
+    expect(clipboardText, contains('SmolVLM2 readiness snapshot'));
+    expect(clipboardText, contains('"passed": false'));
     expect(clipboardText, contains('YOLOv3 Tiny: ready'));
   });
 }
@@ -133,5 +137,16 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
         message: 'DepthAnythingV2SmallF16P6 missing.',
       ),
     );
+  }
+
+  @override
+  Future<String> getSmolVlmReadinessSupportSnapshot() async {
+    return const JsonEncoder.withIndent('  ').convert({
+      'readiness': {
+        'runtimeLinked': true,
+        'passed': false,
+        'failureReason': 'No cached probe.',
+      },
+    });
   }
 }

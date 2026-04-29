@@ -113,18 +113,7 @@ final class ModelDownloadManager: NSObject {
 
     func getModelInfo() -> [String: Any] {
         let modelsDir = LlamaService.modelsDirectory()
-        let fileStates = Self.files.map { file -> [String: Any] in
-            let url = modelsDir.appendingPathComponent(file.name)
-            let size = fileSize(at: url)
-            let valid = isFileValid(file, at: url, verifyHash: false)
-            return [
-                "name": file.name,
-                "downloaded": valid,
-                "sizeBytes": Int(size),
-                "expectedSizeBytes": Int(file.sizeBytes),
-                "sha256": file.sha256,
-            ]
-        }
+        let fileStates = getModelFileIntegrityReport(verifyHash: false)
 
         let downloadedBytes = fileStates.reduce(UInt64(0)) { total, state in
             total + UInt64((state["sizeBytes"] as? Int) ?? 0)
@@ -142,6 +131,29 @@ final class ModelDownloadManager: NSObject {
             "modelName": "SmolVLM2-500M-Video-Instruct Q8_0",
             "files": fileStates,
         ]
+    }
+
+    func getModelFileIntegrityReport(verifyHash: Bool) -> [[String: Any]] {
+        let modelsDir = LlamaService.modelsDirectory()
+        return Self.files.map { file -> [String: Any] in
+            let url = modelsDir.appendingPathComponent(file.name)
+            let size = fileSize(at: url)
+            let present = FileManager.default.fileExists(atPath: url.path)
+            let sizeMatches = size == file.sizeBytes
+            let valid = isFileValid(file, at: url, verifyHash: verifyHash)
+            return [
+                "name": file.name,
+                "fileName": file.name,
+                "present": present,
+                "downloaded": valid,
+                "valid": valid,
+                "sizeMatches": sizeMatches,
+                "shaVerified": verifyHash ? valid : false,
+                "sizeBytes": Int(size),
+                "expectedSizeBytes": Int(file.sizeBytes),
+                "sha256": file.sha256,
+            ]
+        }
     }
 
     // MARK: - Private

@@ -27,6 +27,7 @@ import UIKit
   override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
     super.applicationDidReceiveMemoryWarning(application)
     // Free the VLM to reclaim ~800MB under memory pressure
+    LlamaService.shared.noteMemoryWarning()
     LlamaService.shared.unloadModel()
   }
 

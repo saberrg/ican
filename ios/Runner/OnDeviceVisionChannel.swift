@@ -204,6 +204,21 @@ final class OnDeviceVisionChannel: NSObject {
         case "getModelInfo":
             result(ModelDownloadManager.shared.getModelInfo())
 
+        case "getSmolVlmReadinessContext":
+            result(LlamaService.shared.readinessContext())
+
+        case "runSmolVlmReadinessProbe":
+            guard let imageBytes = imageBytes(from: call, result: result) else { return }
+            let args = call.arguments as? [String: Any] ?? [:]
+            let systemPrompt = args["systemPrompt"] as? String ?? ""
+            Task {
+                let diagnostic = await LlamaService.shared.runReadinessProbe(
+                    jpegData: imageBytes,
+                    systemPrompt: systemPrompt
+                )
+                DispatchQueue.main.async { result(diagnostic) }
+            }
+
         case "runSmolVlmSelfTest":
             guard let imageBytes = imageBytes(from: call, result: result) else { return }
             let args = call.arguments as? [String: Any] ?? [:]

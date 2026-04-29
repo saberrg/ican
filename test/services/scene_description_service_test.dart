@@ -61,35 +61,48 @@ void main() {
       );
     });
 
-    test(
-      'loads and uses SmolVLM when Foundation Models are unavailable',
-      () async {
-        onDevice.modelStatus = ModelStatus.ready;
-        onDevice.loadVlmResult = true;
-        onDevice.vlmOutput = 'SmolVLM2 description';
+    test('uses SmolVLM only after readiness probe passes', () async {
+      onDevice.smolReadinessPassed = true;
+      onDevice.vlmOutput = 'SmolVLM2 description';
 
-        final result = await service.describeOffline(_jpegBytes);
+      final result = await service.describeOffline(_jpegBytes);
 
-        expect(result.backend, VisionBackend.vlm);
-        expect(result.text, 'SmolVLM2 description.');
-        expect(onDevice.loadVlmCalls, 1);
-        expect(onDevice.analyzeSceneCalls, 0);
-        expect(onDevice.analyzeWithVisionCalls, 1);
-      },
-    );
+      expect(result.backend, VisionBackend.vlm);
+      expect(result.text, 'SmolVLM2 description.');
+      expect(onDevice.smolReadinessCalls, 1);
+      expect(onDevice.loadVlmCalls, 0);
+      expect(onDevice.analyzeSceneCalls, 0);
+      expect(onDevice.analyzeWithVisionCalls, 1);
+    });
+
+    test('skips SmolVLM when model files exist but probe failed', () async {
+      onDevice.modelStatus = ModelStatus.ready;
+      onDevice.smolReadinessPassed = false;
+      onDevice.loadVlmResult = true;
+      onDevice.vlmOutput = 'SmolVLM2 description';
+
+      final result = await service.describeOffline(_jpegBytes);
+
+      expect(result.backend, VisionBackend.visionOnly);
+      expect(result.text, contains('hallway setting'));
+      expect(onDevice.smolReadinessCalls, 1);
+      expect(onDevice.loadVlmCalls, 0);
+      expect(onDevice.vlmSystemPrompts, isEmpty);
+    });
 
     test(
       'falls back to SmolVLM when Foundation Models produce no output',
       () async {
         onDevice.foundationModelsAvailable = true;
         onDevice.foundationModelsOutput = '';
-        onDevice.modelStatus = ModelStatus.loaded;
+        onDevice.smolReadinessPassed = true;
         onDevice.vlmOutput = 'SmolVLM2 description';
 
         final result = await service.describeOffline(_jpegBytes);
 
         expect(result.backend, VisionBackend.vlm);
         expect(result.text, 'SmolVLM2 description.');
+        expect(onDevice.smolReadinessCalls, 1);
         expect(onDevice.loadVlmCalls, 0);
         expect(onDevice.analyzeSceneCalls, 0);
         expect(onDevice.analyzeWithVisionCalls, 1);
@@ -101,8 +114,7 @@ void main() {
       () async {
         onDevice.foundationModelsAvailable = true;
         onDevice.foundationModelsError = StateError('FM failed');
-        onDevice.modelStatus = ModelStatus.ready;
-        onDevice.loadVlmResult = true;
+        onDevice.smolReadinessPassed = true;
         onDevice.vlmError = const LocalVisionException(
           'Local L20',
           'SmolVLM2 failed.',
@@ -112,7 +124,8 @@ void main() {
 
         expect(result.backend, VisionBackend.visionOnly);
         expect(result.text, contains('hallway setting'));
-        expect(onDevice.loadVlmCalls, 1);
+        expect(onDevice.smolReadinessCalls, 1);
+        expect(onDevice.loadVlmCalls, 0);
         expect(onDevice.analyzeSceneCalls, 0);
         expect(onDevice.analyzeWithVisionCalls, 1);
       },
@@ -442,6 +455,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool foundationModelsAvailable = false;
   ModelStatus modelStatus = ModelStatus.notDownloaded;
   bool loadVlmResult = false;
+  bool smolReadinessPassed = false;
   bool nativeReady = false;
   bool appleVisionReady = false;
   bool vlmProducesOutput = true;
@@ -452,6 +466,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   Object? analyzeSceneError;
   Object? analyzeWithVisionError;
   int loadVlmCalls = 0;
+  int smolReadinessCalls = 0;
   int analyzeWithVisionCalls = 0;
   int analyzeSceneCalls = 0;
   final List<String> foundationSystemPrompts = [];
@@ -473,6 +488,16 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   Future<bool> loadVlmModel() async {
     loadVlmCalls++;
     return loadVlmResult;
+  }
+
+  @override
+  Future<bool> isSmolVlmReadyForDescribe(
+    Uint8List jpegBytes, {
+    String systemPrompt =
+        'Describe this image in one concise sentence for a blind user.',
+  }) async {
+    smolReadinessCalls++;
+    return smolReadinessPassed;
   }
 
   @override
