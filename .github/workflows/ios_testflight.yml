@@ -12,8 +12,8 @@ on:
         required: false
         type: string
   push:
-    tags:
-      - "ios-v*"
+    branches:
+      - "release/testflight-build-*"
 
 permissions:
   contents: read

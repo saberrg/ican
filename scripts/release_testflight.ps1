@@ -13,41 +13,25 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
-if (-not $Version) {
-    $versionLine = Select-String -Path "pubspec.yaml" -Pattern "^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+" | Select-Object -First 1
-    if (-not $versionLine) {
-        throw "Could not infer app version from pubspec.yaml. Pass -Version explicitly."
-    }
-    $Version = $versionLine.Matches[0].Groups[1].Value
-}
-
-if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+if ($Version -and $Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     throw "Version must look like 1.0.0."
 }
 
-$tag = "ios-v$Version-$BuildNumber"
+$branch = "release/testflight-build-$BuildNumber"
 
-Write-Host "==> Checking release tag $tag" -ForegroundColor Cyan
-git rev-parse -q --verify "refs/tags/$tag" | Out-Null
+Write-Host "==> Checking release branch $branch" -ForegroundColor Cyan
+git ls-remote --exit-code --heads origin "refs/heads/$branch" | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    throw "Local tag already exists: $tag"
-}
-
-git ls-remote --exit-code --tags origin "refs/tags/$tag" | Out-Null
-if ($LASTEXITCODE -eq 0) {
-    throw "Remote tag already exists: $tag"
+    throw "Remote branch already exists: $branch"
 }
 if ($LASTEXITCODE -ne 2) {
-    throw "Could not check remote tag $tag"
+    throw "Could not check remote branch $branch"
 }
 
-Write-Host "==> Creating tag $tag" -ForegroundColor Cyan
-git tag -a $tag -m "Release iCan $Version build $BuildNumber to TestFlight"
+Write-Host "==> Pushing release branch $branch" -ForegroundColor Cyan
+git push origin "HEAD:refs/heads/$branch"
 
-Write-Host "==> Pushing tag $tag" -ForegroundColor Cyan
-git push origin $tag
-
-Write-Host "Triggered TestFlight release from tag $tag." -ForegroundColor Green
+Write-Host "Triggered TestFlight release from branch $branch." -ForegroundColor Green
 
 if ($Watch) {
     $gh = Get-Command gh -ErrorAction SilentlyContinue
@@ -73,7 +57,7 @@ if ($Watch) {
             2>$null
         if ($LASTEXITCODE -eq 0 -and $json) {
             $runs = $json | ConvertFrom-Json
-            $match = $runs | Where-Object { $_.headBranch -eq $tag -or $_.event -eq "push" } | Select-Object -First 1
+            $match = $runs | Where-Object { $_.headBranch -eq $branch -or $_.event -eq "push" } | Select-Object -First 1
             if ($match) {
                 $runId = $match.databaseId
                 break

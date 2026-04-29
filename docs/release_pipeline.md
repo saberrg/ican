@@ -26,7 +26,7 @@ Mac without committing secrets or Apple signing material.
 Primary release path:
 
 1. Codex edits locally, runs the iCan verification gates, commits, and pushes.
-2. Codex pushes a release tag like `ios-v1.0.0-26`, or the workflow is triggered manually.
+2. Codex pushes a release branch like `release/testflight-build-26`, or the workflow is triggered manually.
 3. The job runs on a self-hosted macOS runner labeled `macOS` and `ican-ios`.
 4. The Mac runs `scripts/macos_setup.sh --ci`.
 5. The Mac runs `scripts/macos_release.sh <build_number>`.
@@ -96,9 +96,9 @@ Preferred hands-free trigger:
 .\scripts\release_testflight.ps1 -BuildNumber 26 -Watch
 ```
 
-The helper creates and pushes tag `ios-v1.0.0-26`; the workflow extracts build
-number `26` from the tag suffix. `-Watch` uses GitHub CLI when authenticated.
-Without GitHub CLI auth, pushing the tag still triggers the release.
+The helper pushes branch `release/testflight-build-26`; the workflow extracts
+build number `26` from the branch suffix. `-Watch` uses GitHub CLI when authenticated.
+Without GitHub CLI auth, pushing the release branch still triggers the release.
 
 Manual UI trigger:
 
