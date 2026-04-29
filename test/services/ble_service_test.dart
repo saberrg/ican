@@ -344,6 +344,8 @@ void main() {
       expect(BleService.instance.eyeReadinessStatus.ready, isFalse);
       expect(BleService.instance.eyeReconnectPendingForTesting, isTrue);
 
+      BleService.instance.resetEyeReliabilityForTesting();
+
       await Future<void>.delayed(Duration.zero);
       final logs = await AppLogService.instance.exportText();
       expect(
