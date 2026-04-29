@@ -226,7 +226,7 @@ class BleService extends ChangeNotifier {
   String? _preferredEyeDeviceId;
 
   static const Duration _imageTransferTimeout = Duration(seconds: 45);
-  static const Duration _captureResponseTimeout = Duration(seconds: 1);
+  static const Duration _captureResponseTimeout = Duration(seconds: 3);
   static const Duration _eyeHeartbeatInterval = Duration(seconds: 15);
   static const Duration _eyeReconnectInitialDelay = Duration(seconds: 3);
   static const Duration _eyeReconnectMaxDelay = Duration(seconds: 30);

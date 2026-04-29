@@ -144,6 +144,34 @@ void main() {
       expect(result?.diagnostic?.stableCode, 'Eye E05');
       expect(result?.diagnostic?.spokenMessage, contains('camera capture'));
     });
+
+    test('firmware stream abort reports sent and expected byte counts', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+
+      final result = assembler.handleControlMessage(
+        'ERR:${EyeEvents.streamAborted}:3:120:240',
+      );
+
+      final diagnostic = result?.diagnostic;
+      expect(diagnostic?.stableCode, 'Eye E02');
+      expect(diagnostic?.firmwareError, EyeEvents.streamAborted);
+      expect(diagnostic?.sentChunks, 3);
+      expect(diagnostic?.sentBytes, 120);
+      expect(diagnostic?.expectedBytes, 240);
+    });
+
+    test('firmware chunk notify failure reports failed sequence', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+
+      final result = assembler.handleControlMessage(
+        'ERR:${EyeEvents.chunkNotifyFailed}:7',
+      );
+
+      final diagnostic = result?.diagnostic;
+      expect(diagnostic?.stableCode, 'Eye E02');
+      expect(diagnostic?.firmwareError, EyeEvents.chunkNotifyFailed);
+      expect(diagnostic?.failedSequence, 7);
+    });
   });
 }
 

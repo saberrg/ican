@@ -185,6 +185,27 @@ void main() {
       expect(capturedRequest.url.queryParameters, isNot(contains('key')));
     });
 
+    test('streaming accepts SSE data lines without a space', () async {
+      final service = VertexAiService(
+        apiKey: 'test-key',
+        httpClient: MockClient((_) async {
+          return http.Response(
+            [
+              'data:{"candidates":[{"content":{"parts":[{"text":"Door "}]}}]}',
+              'data:{"candidates":[{"content":{"parts":[{"text":"ahead."}]}}]}',
+            ].join('\n'),
+            200,
+          );
+        }),
+      );
+
+      final chunks = await service
+          .streamContentFromImage(_jpegBytes, systemPrompt: 'Describe safely.')
+          .toList();
+
+      expect(chunks.join(), 'Door ahead.');
+    });
+
     test('image requests use prompt-specific max output tokens', () async {
       late Map<String, dynamic> body;
       final service = VertexAiService(
