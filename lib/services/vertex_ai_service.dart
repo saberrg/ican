@@ -314,10 +314,10 @@ class VertexAiService extends ChangeNotifier {
           final line = lineBuf.substring(0, lineEnd).trim();
           lineBuf = lineBuf.substring(lineEnd + 1);
 
-          if (line.startsWith('data: ')) {
+          final data = _sseDataPayload(line);
+          if (data != null) {
             try {
-              final json =
-                  jsonDecode(line.substring(6)) as Map<String, dynamic>;
+              final json = jsonDecode(data) as Map<String, dynamic>;
               final text = _extractText(json, allowEmptyText: true);
               if (text.isNotEmpty) {
                 yieldedText = true;
@@ -333,10 +333,10 @@ class VertexAiService extends ChangeNotifier {
 
       // Flush remaining data; the last SSE line may not end with \n.
       final remaining = lineBuf.trim();
-      if (remaining.startsWith('data: ')) {
+      final remainingData = _sseDataPayload(remaining);
+      if (remainingData != null) {
         try {
-          final json =
-              jsonDecode(remaining.substring(6)) as Map<String, dynamic>;
+          final json = jsonDecode(remainingData) as Map<String, dynamic>;
           final text = _extractText(json, allowEmptyText: true);
           if (text.isNotEmpty) {
             yieldedText = true;
@@ -377,6 +377,13 @@ class VertexAiService extends ChangeNotifier {
 
   Uri _streamUrl() {
     return Uri.parse('$_baseUrl/${_model.id}:streamGenerateContent?alt=sse');
+  }
+
+  String? _sseDataPayload(String line) {
+    if (!line.startsWith('data:')) return null;
+    final data = line.substring(5).trimLeft();
+    if (data.isEmpty || data == '[DONE]') return null;
+    return data;
   }
 
   Map<String, String> get _requestHeaders {

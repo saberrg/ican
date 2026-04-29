@@ -376,6 +376,15 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                                 ? (s_negotiatedMtu - 3 - IMAGE_HEADER_BYTES)
                                 : 0;
   const size_t effectiveMax = (mtuPayload < IMAGE_MAX_PAYLOAD) ? mtuPayload : IMAGE_MAX_PAYLOAD;
+  if (effectiveMax == 0) {
+    char abortMsg[64];
+    snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:0:0:%u",
+             (unsigned)jpegLen);
+    sendControlMessage(abortMsg);
+    Serial.printf("[BLE] Cannot stream image: MTU=%u gives 0 payload bytes\n",
+                  s_negotiatedMtu);
+    return;
+  }
   const unsigned estChunks = (jpegLen + effectiveMax - 1) / effectiveMax;
 
   Serial.printf("[BLE] Streaming %u bytes (MTU=%u, payload=%u, ~%u chunks, profile=%s)\n",
