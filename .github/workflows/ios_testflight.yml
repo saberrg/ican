@@ -36,9 +36,12 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_CONTENT_BASE64: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       ELEVENLABS_TTS_WORKER_URL: ${{ secrets.ELEVENLABS_TTS_WORKER_URL }}
       ICAN_ALLOW_BOOTSTRAP: "1"
       ICAN_DOWNLOAD_COREML: "1"
+      ICAN_BUILD_LLAMA: "1"
+      LLAMA_CPP_REF: 0949beb5a3fc02adf0558d0f6736f1011c10891c
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,17 +52,6 @@ jobs:
       - name: Prepare release scripts
         shell: bash
         run: chmod +x scripts/macos_setup.sh scripts/macos_release.sh
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.3"
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
 
       - name: Verify Mac runner
         shell: bash

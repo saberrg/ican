@@ -22,9 +22,8 @@ $branch = "release/testflight-build-$BuildNumber"
 Write-Host "==> Checking release branch $branch" -ForegroundColor Cyan
 git ls-remote --exit-code --heads origin "refs/heads/$branch" | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    throw "Remote branch already exists: $branch"
-}
-if ($LASTEXITCODE -ne 2) {
+    Write-Host "Remote branch exists; updating it to trigger a new TestFlight run." -ForegroundColor Yellow
+} elseif ($LASTEXITCODE -ne 2) {
     throw "Could not check remote branch $branch"
 }
 
