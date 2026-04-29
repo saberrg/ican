@@ -77,7 +77,7 @@ characteristics:
     events:
       "CAPTURE:START": "Firmware accepted a capture request and is attempting camera capture."
       "BUTTON:DOUBLE": "Physical button double-press detected (Eye -> App). Triggers voice command listening."
-      "STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}:{freePsram}:{mtu}:{payloadCap}:{lastError}": "Status response to STATUS command. Fields after firmwareVersion are optional for backward compatibility."
+      "STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}:{freePsram}:{mtu}:{payloadCap}:{lastError}:{cameraSensor}:{lastStreamBytes}:{lastStreamMs}:{lastStreamChunks}:{qualityFlags}:{brightnessEstimate}:{contrastEstimate}:{tuneAction}": "Status response to STATUS command. Fields after firmwareVersion are optional for backward compatibility. qualityFlags bitmask: 1=dim, 2=bright, 4=low_contrast, 8=large_jpeg. Brightness/contrast are lightweight JPEG-stream estimates used for diagnostics and next-capture tuning."
       "SIZE:{bytes}": "JPEG byte length for the next image stream."
       "CRC:{hex}": "CRC32 of the complete JPEG payload."
       "END:{chunks}": "Image stream finished after the given chunk count."
@@ -219,6 +219,13 @@ gps_packet:
 #
 # No per-chunk checksum — BLE link layer provides CRC. End-to-end integrity is
 # validated by JPEG magic bytes and the CRC:{hex} control message.
+# Camera profile policy:
+# - FAST (0) is the recovery/live profile and the only profile assumed stable
+#   after Eye E02/E03/E04 or missed STATUS heartbeat.
+# - Manual Describe requests FAST for Safety mode.
+# - Manual Describe requests BALANCED for Balanced and Reading modes after a
+#   clean readiness STATUS round trip.
+# - QUALITY (2) and MAX (3) are operator diagnostics, not demo defaults.
 image_packet:
   header_bytes: 2
   max_payload_bytes: 509

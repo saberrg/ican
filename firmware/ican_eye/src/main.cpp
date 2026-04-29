@@ -15,6 +15,7 @@
  */
 
 #include <Arduino.h>
+#include <string.h>
 
 // Local library headers (implemented in lib/ subdirectories)
 #include "ble_eye.h"
@@ -25,7 +26,7 @@
 
 // Hardware Button Configuration
 #define CAPTURE_BUTTON_PIN D1
-static const char *ICAN_EYE_FIRMWARE_VERSION = "1.0.0+25";
+static const char *ICAN_EYE_FIRMWARE_VERSION = "1.0.0+26";
 const unsigned long BUTTON_DEBOUNCE_MS = 50;
 const unsigned long DOUBLE_PRESS_WINDOW_MS = 400;
 
@@ -49,6 +50,27 @@ int liveIntervalMs = 1500;
 // interval.  Must never double as a "next capture time" marker.
 unsigned long liveLastEndMs = 0;
 bool liveBusy = false;
+
+void sendStatusMessage() {
+  char msg[280];
+  const char *lastStreamResult = getBleEyeLastStreamResult();
+  const char *lastError =
+      (strcmp(lastStreamResult, "none") == 0 ||
+       strcmp(lastStreamResult, "ok") == 0)
+          ? "none"
+          : lastStreamResult;
+  snprintf(msg, sizeof(msg),
+           "STATUS:%d:%s:%s:%d:%s:%u:%u:%u:%s:%s:%u:%u:%u:%u:%u:%u:%s",
+           getCurrentProfile(), profiles[getCurrentProfile()].name,
+           liveMode ? "LIVE" : "IDLE", liveIntervalMs,
+           ICAN_EYE_FIRMWARE_VERSION, ESP.getFreePsram(),
+           getBleEyeNegotiatedMtu(), getBleEyePayloadCap(), lastError,
+           getCameraSensorName(), getBleEyeLastStreamBytes(),
+           getBleEyeLastStreamMs(), getBleEyeLastStreamChunks(),
+           getCameraQualityFlags(), getCameraQualityBrightnessEstimate(),
+           getCameraQualityContrastEstimate(), getCameraQualityTuneAction());
+  sendControlMessage(msg);
+}
 
 // ============================================================================
 // Setup
@@ -136,6 +158,7 @@ void loop() {
           streamImageViaBle(fb->buf, fb->len,
                             profiles[getCurrentProfile()].name);
           esp_camera_fb_return(fb);
+          sendStatusMessage();
         }
       }
     }
@@ -184,6 +207,7 @@ void loop() {
       streamImageViaBle(fb->buf, fb->len,
                         profiles[getCurrentProfile()].name);
       esp_camera_fb_return(fb);
+      sendStatusMessage();
     } else {
       sendControlMessage("ERR:CAMERA_CAPTURE_FAILED");
     }
@@ -240,15 +264,7 @@ void loop() {
     Serial.printf("[Main] Current profile: %d (%s), live=%s\n",
                   getCurrentProfile(), profiles[getCurrentProfile()].name,
                   liveMode ? "ON" : "OFF");
-    {
-      char msg[160];
-      snprintf(msg, sizeof(msg), "STATUS:%d:%s:%s:%d:%s:%u:%u:%u:%s",
-               getCurrentProfile(),
-               profiles[getCurrentProfile()].name, liveMode ? "LIVE" : "IDLE",
-               liveIntervalMs, ICAN_EYE_FIRMWARE_VERSION, ESP.getFreePsram(),
-               getBleEyeNegotiatedMtu(), getBleEyePayloadCap(), "none");
-      sendControlMessage(msg);
-    }
+    sendStatusMessage();
     break;
 
   case EYE_CMD_NONE:

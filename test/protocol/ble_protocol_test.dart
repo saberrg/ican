@@ -103,6 +103,10 @@ void main() {
       expect(EyeCommands.liveStop, 'LIVE_STOP');
       expect(EyeCommands.profile(2), 'PROFILE:2');
       expect(EyeCommands.status, 'STATUS');
+      expect(EyeProfileIndex.fast, 0);
+      expect(EyeProfileIndex.balanced, 1);
+      expect(EyeProfileIndex.quality, 2);
+      expect(EyeProfileIndex.max, 3);
       expect(EyeEvents.buttonDouble, 'BUTTON:DOUBLE');
       expect(EyeEvents.captureStart, 'CAPTURE:START');
       expect(EyeEvents.sizePrefix, 'SIZE:');

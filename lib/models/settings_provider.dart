@@ -171,9 +171,9 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // ── Descriptions ──
-  // Defaults line up with the single hazard-first prompt contract shipped in
-  // ScenePromptBuilder.  The individual knobs are now no-ops at the builder
-  // level but are kept persisted for backward compat + a future debug panel.
+  // Defaults line up with the demo-safe prompt contract shipped in
+  // ScenePromptBuilder. These knobs now drive runtime prompt and Eye profile
+  // policy, so keep them persisted for voice/settings continuity.
   DetailLevel _detailLevel = DetailLevel.brief;
   HazardSensitivity _hazardSensitivity = HazardSensitivity.medium;
   PromptProfile _promptProfile = PromptProfile.safety;

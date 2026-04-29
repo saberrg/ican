@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ican/core/theme.dart';
 import 'package:ican/screens/vision_diagnostic_screen.dart';
+import 'package:ican/services/ble_service.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,14 +27,18 @@ void main() {
   });
 
   tearDown(() {
+    BleService.instance.resetEyeReliabilityForTesting();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, null);
   });
 
-  testWidgets('Vision Diagnostic reports BLE and native health only', (
+  testWidgets('Vision Diagnostic reports local backend readiness', (
     tester,
   ) async {
     final onDevice = _FakeOnDeviceVisionService();
+    BleService.instance.setLastEyeStatusForTesting(
+      'STATUS:0:FAST:IDLE:1500:1.0.0+26:8123456:247:240:none:OV3660:12345:890:52:5:61:44:boost_light_contrast',
+    );
 
     await tester.pumpWidget(
       _buildTestApp(VisionDiagnosticScreen(onDeviceService: onDevice)),
@@ -41,21 +46,43 @@ void main() {
 
     expect(find.text('Dev Diagnostics'), findsOneWidget);
     expect(find.text('Run Diagnostics'), findsOneWidget);
-    expect(find.textContaining('SmolVLM2'), findsNothing);
 
     await tester.tap(find.text('Run Diagnostics'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Native channel: ready'), findsOneWidget);
+    expect(find.textContaining('Camera sensor: OV3660'), findsOneWidget);
+    expect(
+      find.textContaining('Image quality: dim,low_contrast'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Eye tune: boost_light_contrast'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Apple Vision: ready'), findsOneWidget);
+    expect(
+      find.textContaining('Foundation Models: unavailable'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('SmolVLM2 status: downloaded'), findsOneWidget);
+    expect(
+      find.textContaining('SmolVLM2 load: loaded successfully'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Vision template fallback: ready'),
+      findsOneWidget,
+    );
     expect(find.textContaining('YOLOv3 Tiny: ready'), findsOneWidget);
     expect(find.textContaining('Depth Anything: unavailable'), findsOneWidget);
-    expect(find.textContaining('SmolVLM2'), findsNothing);
 
     await tester.tap(find.text('Copy Diagnostics'));
     await tester.pump();
 
     expect(clipboardText, contains('iCan Eye diagnostics'));
+    expect(clipboardText, contains('Image quality: dim,low_contrast'));
+    expect(clipboardText, contains('SmolVLM2 load: loaded successfully'));
     expect(clipboardText, contains('YOLOv3 Tiny: ready'));
   });
 }
@@ -79,11 +106,14 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   Future<OfflineVisionStatus> getOfflineVisionStatus() async {
     return const OfflineVisionStatus(
       foundationModelsAvailable: false,
-      modelStatus: ModelStatus.notAvailable,
+      modelStatus: ModelStatus.ready,
       objectDetectionAvailable: true,
       depthEstimationAvailable: false,
     );
   }
+
+  @override
+  Future<bool> loadVlmModel() async => true;
 
   @override
   Future<OfflineVisionDiagnostics> getOfflineVisionDiagnostics() async {

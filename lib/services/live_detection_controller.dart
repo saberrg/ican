@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../protocol/ble_protocol.dart';
 import 'ble_service.dart';
 import 'on_device_vision_service.dart';
 import 'tts_service.dart';
@@ -60,7 +61,7 @@ class LiveDetectionController extends ChangeNotifier {
     });
 
     try {
-      await _ble.setEyeProfile(0);
+      await _ble.setEyeProfile(EyeProfileIndex.fast);
       await _ble.startLiveCapture(intervalMs: intervalMs);
       _setState(LiveDetectionState.running);
       await _safeSpeak('Live Detection started.');
@@ -80,7 +81,6 @@ class LiveDetectionController extends ChangeNotifier {
     _connectionSub = null;
     try {
       await _ble.stopLiveCapture();
-      await _ble.setEyeProfile(1);
     } catch (e) {
       debugPrint('[LiveDetectionController] stop failed: $e');
     }

@@ -45,7 +45,8 @@ Events from Eye to app:
 - `SIZE:{bytes}`
 - `CRC:{hex}`
 - `END:{chunks}`
-- `STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}`
+- `STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}:{freePsram}:{mtu}:{payloadCap}:{lastError}:{cameraSensor}:{lastStreamBytes}:{lastStreamMs}:{lastStreamChunks}:{qualityFlags}:{brightnessEstimate}:{contrastEstimate}:{tuneAction}`
+- `qualityFlags` is optional/backward-compatible: `1=dim`, `2=bright`, `4=low_contrast`, `8=large_jpeg`. Brightness and contrast are lightweight JPEG-stream estimates used to tune the next capture and surface camera-health diagnostics.
 - `ERR:{code}`
 
 Image chunks are `[uint16_le sequence][jpeg payload]`, capped by negotiated
@@ -61,6 +62,14 @@ BLE MTU and `IMAGE_MAX_PAYLOAD`.
 | 3 | MAX | UXGA 1600x1200 | 8 |
 
 Lower JPEG quality numbers mean higher image quality and larger files.
+
+Demo policy:
+
+- `FAST` is used for Safety Describe, live detection, recovery after transfer
+  diagnostics, and missed STATUS heartbeats.
+- `BALANCED` is used for Balanced and Reading Describe after a clean STATUS
+  readiness round trip.
+- `QUALITY` and `MAX` are operator diagnostics, not defaults.
 
 ## Build
 

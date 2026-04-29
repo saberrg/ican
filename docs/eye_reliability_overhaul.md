@@ -36,6 +36,9 @@ App                                   Eye (XIAO ESP32-S3)
   `EYE_IMAGE_FIRMWARE_PAYLOAD_CAP = 240` bytes regardless of the negotiated
   MTU. Smaller chunks + more of them beat large chunks that saturate the iOS
   ACL queue late in the transfer.
+- Profile policy is deliberately conservative: `FAST` is used for live and
+  recovery after Eye E02/E03/E04 or missed STATUS heartbeat, while `BALANCED`
+  is requested only after a clean manual Describe readiness round trip.
 - The Flutter `EyeImageTransferAssembler`
   (`lib/protocol/eye_capture_diagnostics.dart`) owns validation: dedupes
   chunks, tracks missed sequence numbers, validates JPEG magic/end + optional

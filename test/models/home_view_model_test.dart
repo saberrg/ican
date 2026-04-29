@@ -3,11 +3,13 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ican/models/home_view_model.dart';
 import 'package:ican/models/settings_provider.dart';
+import 'package:ican/protocol/ble_protocol.dart';
 import 'package:ican/protocol/describe_attempt_trace.dart';
 import 'package:ican/protocol/eye_capture_diagnostics.dart';
 import 'package:ican/services/ble_service.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:ican/services/scene_description_service.dart';
+import 'package:ican/services/scene_prompt_builder.dart';
 import 'package:ican/services/tts_service.dart';
 import 'package:ican/services/vertex_ai_service.dart';
 import 'package:image/image.dart' as img;
@@ -23,6 +25,7 @@ void main() {
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
+      BleService.instance.resetEyeReliabilityForTesting();
       BleService.instance.setEyeConnectionStateForTesting(
         BleConnectionState.disconnected,
       );
@@ -40,6 +43,7 @@ void main() {
 
     tearDown(() {
       viewModel.dispose();
+      BleService.instance.resetEyeReliabilityForTesting();
       BleService.instance.setEyeConnectionStateForTesting(
         BleConnectionState.disconnected,
       );
@@ -131,6 +135,19 @@ void main() {
       expect(speech.spoken.last, 'Local L03: Apple Vision or Core ML failed.');
     });
 
+    test(
+      'offline Describe sends original Eye JPEG without enhancement',
+      () async {
+        final jpeg = _validJpeg();
+
+        await viewModel.processImageForTesting(jpeg, offline: true);
+
+        expect(sceneService.offlineImageBytes, same(jpeg));
+        expect(sceneService.cloudImageBytes, isNull);
+        expect(speech.spoken.last, 'A hallway is clear.');
+      },
+    );
+
     test('speaks BLE CRC mismatch diagnostic exactly', () async {
       viewModel.startCaptureTimeoutForTesting();
 
@@ -168,6 +185,130 @@ void main() {
 
       expect(viewModel.visionMode, VisionMode.cloudOnly);
       expect(notifications, greaterThan(0));
+    });
+
+    test('Safety Describe requests FAST Eye profile before capture', () async {
+      settingsReadyForDescribe(viewModel);
+      BleService.instance.enableEyeCommandLoopbackForTesting();
+      viewModel.settingsProvider.setPromptProfile(PromptProfile.safety);
+
+      final resultFuture = viewModel.describeNow();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.profile(EyeProfileIndex.fast)),
+      );
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.capture),
+      );
+      await viewModel.handleEyeCaptureDiagnosticForTesting(_e01());
+      await resultFuture;
+    });
+
+    test(
+      'Balanced, Reading, and Navigation Describe request BALANCED Eye profile',
+      () async {
+        for (final profile in [
+          PromptProfile.balanced,
+          PromptProfile.reading,
+          PromptProfile.navigation,
+        ]) {
+          BleService.instance.resetEyeReliabilityForTesting();
+          settingsReadyForDescribe(viewModel);
+          BleService.instance.enableEyeCommandLoopbackForTesting();
+          viewModel.settingsProvider.setPromptProfile(profile);
+
+          final resultFuture = viewModel.describeNow();
+          await Future<void>.delayed(Duration.zero);
+          await Future<void>.delayed(Duration.zero);
+
+          expect(
+            BleService.instance.eyeCommandsSentForTesting,
+            contains(EyeCommands.profile(EyeProfileIndex.balanced)),
+          );
+          await viewModel.handleEyeCaptureDiagnosticForTesting(_e01());
+          await resultFuture;
+        }
+      },
+    );
+
+    test('unclear quality-flagged image retries once before speaking', () async {
+      viewModel.dispose();
+      sceneService = _FakeSceneDescriptionService();
+      speech = _FakeSpeechOutput();
+      viewModel = HomeViewModel(
+        sceneService: sceneService,
+        ttsService: speech,
+        settingsProvider: SettingsProvider(ttsService: speech),
+        processingTimeout: const Duration(seconds: 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      speech.spoken.clear();
+      settingsReadyForDescribe(viewModel);
+      BleService.instance.enableEyeCommandLoopbackForTesting();
+      viewModel.settingsProvider.setPromptProfile(PromptProfile.safety);
+      sceneService.responses = [
+        'The scene could not be clearly identified.',
+        'A brighter hallway is clear.',
+      ];
+
+      final resultFuture = viewModel.describeNow();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      BleService.instance.handleEyeControlMessageForTesting(
+        'STATUS:0:FAST:IDLE:1500:1.0.0+26:8000000:247:240:none:OV3660:16000:700:70:5:55:40:boost_light_contrast',
+      );
+      BleService.instance.emitEyeImageForTesting(_validJpeg());
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      expect(
+        BleService.instance.eyeCommandsSentForTesting
+            .where((command) => command == EyeCommands.capture)
+            .length,
+        greaterThanOrEqualTo(2),
+      );
+
+      BleService.instance.handleEyeControlMessageForTesting(
+        'STATUS:0:FAST:IDLE:1500:1.0.0+26:8000000:247:240:none:OV3660:15000:650:65:0:120:180:hold',
+      );
+      BleService.instance.emitEyeImageForTesting(_validJpeg(red: 32));
+
+      final result = await resultFuture;
+      expect(result, 'Scene description complete.');
+      expect(speech.spoken, contains('A brighter hallway is clear.'));
+      expect(
+        speech.spoken,
+        isNot(contains('The scene could not be clearly identified.')),
+      );
+      expect(sceneService.describeCalls, 2);
+    });
+
+    test('profile ack timeout falls back and still triggers capture', () async {
+      settingsReadyForDescribe(viewModel);
+      BleService.instance.setEyeProfileAckTimeoutForTesting(
+        const Duration(milliseconds: 1),
+      );
+      BleService.instance.enableEyeCommandLoopbackForTesting(
+        autoProfileAck: false,
+      );
+      viewModel.settingsProvider.setPromptProfile(PromptProfile.balanced);
+
+      final resultFuture = viewModel.describeNow();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.profile(EyeProfileIndex.balanced)),
+      );
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.capture),
+      );
+      await viewModel.handleEyeCaptureDiagnosticForTesting(_e01());
+      await resultFuture;
     });
 
     test(
@@ -232,8 +373,36 @@ void main() {
   });
 }
 
-Uint8List _validJpeg() {
+void settingsReadyForDescribe(HomeViewModel viewModel) {
+  BleService.instance.setEyeConnectionStateForTesting(
+    BleConnectionState.connected,
+  );
+  BleService.instance.updateEyeReadinessForTesting(
+    BleReadinessPhase.ready,
+    requiredCharacteristicsReady: true,
+    commandPathReady: true,
+  );
+}
+
+EyeCaptureDiagnostic _e01() {
+  return const EyeCaptureDiagnostic(
+    code: EyeCaptureDiagnosticCode.noCaptureStartOrSize,
+    captureStarted: false,
+    sizeArrived: false,
+    expectedBytes: 0,
+    receivedBytes: 0,
+    uniqueChunks: 0,
+    duplicateChunks: 0,
+    endArrived: false,
+    jpegMagicValid: false,
+    jpegEndValid: false,
+    timeoutStage: EyeTransferTimeoutStage.awaitingCaptureStart,
+  );
+}
+
+Uint8List _validJpeg({int red = 0}) {
   final image = img.Image(width: 2, height: 2);
+  image.setPixelRgb(0, 0, red, 0, 0);
   return Uint8List.fromList(img.encodeJpg(image));
 }
 
@@ -292,27 +461,47 @@ class _FakeSceneDescriptionService extends SceneDescriptionService {
       );
 
   Object? error;
+  List<String>? responses;
   int describeCalls = 0;
+  Uint8List? cloudImageBytes;
+  Uint8List? offlineImageBytes;
+  ScenePromptContext? lastPromptContext;
+
+  String _nextResponse() {
+    final queued = responses;
+    if (queued != null && queued.isNotEmpty) return queued.removeAt(0);
+    return 'A hallway is clear.';
+  }
 
   @override
-  Future<SceneDescriptionResult> describeCloud(Uint8List imageBytes) async {
+  Future<SceneDescriptionResult> describeCloud(
+    Uint8List imageBytes, {
+    ScenePromptContext promptContext = const ScenePromptContext(),
+  }) async {
     describeCalls++;
+    cloudImageBytes = imageBytes;
+    lastPromptContext = promptContext;
     final failure = error;
     if (failure != null) throw failure;
-    return const SceneDescriptionResult(
-      text: 'A hallway is clear.',
+    return SceneDescriptionResult(
+      text: _nextResponse(),
       backend: VisionBackend.cloud,
       completionMetadata: SceneCompletionMetadata.complete,
     );
   }
 
   @override
-  Future<SceneDescriptionResult> describeOffline(Uint8List imageBytes) async {
+  Future<SceneDescriptionResult> describeOffline(
+    Uint8List imageBytes, {
+    ScenePromptContext promptContext = const ScenePromptContext(),
+  }) async {
     describeCalls++;
+    offlineImageBytes = imageBytes;
+    lastPromptContext = promptContext;
     final failure = error;
     if (failure != null) throw failure;
-    return const SceneDescriptionResult(
-      text: 'A hallway is clear.',
+    return SceneDescriptionResult(
+      text: _nextResponse(),
       backend: VisionBackend.visionOnly,
       completionMetadata: SceneCompletionMetadata.complete,
     );
@@ -324,12 +513,14 @@ class _FakeSceneDescriptionService extends SceneDescriptionService {
     required String systemPrompt,
     String userPrompt = 'Describe what you see.',
     int maxOutputTokens = 500,
+    ScenePromptContext promptContext = const ScenePromptContext(),
     void Function(String status, VisionBackend backend)? onStatusUpdate,
   }) async* {
     describeCalls++;
+    lastPromptContext = promptContext;
     final failure = error;
     if (failure != null) throw failure;
-    yield 'A hallway is clear.';
+    yield _nextResponse();
   }
 }
 

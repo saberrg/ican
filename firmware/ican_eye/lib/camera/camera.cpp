@@ -6,6 +6,7 @@
  */
 
 #include "camera.h"
+#include "camera_quality.h"
 #include <Arduino.h>
 
 // Camera pin definitions (resolved relative to project root)
@@ -29,6 +30,55 @@ const int NUM_PROFILES = sizeof(profiles) / sizeof(profiles[0]);
 // iOS ACL queue saturates. Operators can still switch via the PROFILE
 // command for diagnostics.
 static int currentProfile = 0; // default: FAST
+static const char *cameraSensorName = "unknown";
+static ican_eye_quality::CameraQualitySnapshot lastQuality = {0, 0, 0, "boot"};
+
+static void applyProfileSensorTuning(sensor_t *s, int idx) {
+  if (!s) return;
+  if (idx == 0) {
+    // FAST is safety/live/recovery: favor a brighter, stable image that still
+    // transfers quickly over BLE.
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 0);
+    s->set_sharpness(s, 1);
+    s->set_denoise(s, 1);
+    s->set_ae_level(s, 1);
+    s->set_gainceiling(s, GAINCEILING_8X);
+  } else {
+    // BALANCED/diagnostic profiles are text-friendly: sharper edges, less
+    // overexposure, and enough contrast for OCR.
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 2);
+    s->set_saturation(s, 0);
+    s->set_sharpness(s, 2);
+    s->set_denoise(s, 1);
+    s->set_ae_level(s, 0);
+    s->set_gainceiling(s, GAINCEILING_8X);
+  }
+}
+
+static void applyQualityTune(sensor_t *s) {
+  if (!s) return;
+  using namespace ican_eye_quality;
+  if ((lastQuality.flags & QUALITY_DIM) != 0) {
+    s->set_brightness(s, currentProfile == 0 ? 2 : 1);
+    s->set_ae_level(s, 2);
+    s->set_gainceiling(s, currentProfile == 0 ? GAINCEILING_16X
+                                              : GAINCEILING_8X);
+  } else if ((lastQuality.flags & QUALITY_BRIGHT) != 0) {
+    s->set_brightness(s, 0);
+    s->set_ae_level(s, -1);
+    s->set_gainceiling(s, GAINCEILING_4X);
+  }
+  if ((lastQuality.flags & QUALITY_LOW_CONTRAST) != 0) {
+    s->set_contrast(s, 2);
+    s->set_sharpness(s, 2);
+  }
+  if ((lastQuality.flags & QUALITY_LARGE_JPEG) != 0 && currentProfile == 0) {
+    s->set_quality(s, 14);
+  }
+}
 
 // =========================================================================
 // Init
@@ -83,17 +133,16 @@ void initCamera() {
   // Sensor tuning: sharp, balanced exposure for readable text and hazards.
   sensor_t *s = esp_camera_sensor_get();
   if (s) {
-    s->set_brightness(s, 1);             // +1 (was +2, too washed out)
-    s->set_contrast(s, 1);              // +1 for text readability
-    s->set_saturation(s, 0);            // neutral
-    s->set_sharpness(s, 2);             // +2 sharpness for text/edges
-    s->set_denoise(s, 1);              // light denoise (reduce grain)
+    if (s->id.PID == OV3660_PID) {
+      cameraSensorName = "OV3660";
+    } else if (s->id.PID == OV2640_PID) {
+      cameraSensorName = "OV2640";
+    }
+    applyProfileSensorTuning(s, currentProfile);
     s->set_whitebal(s, 1);             // auto white balance ON
     s->set_awb_gain(s, 1);             // AWB gain ON
     s->set_wb_mode(s, 0);              // auto WB mode
     s->set_aec2(s, 1);                 // advanced AEC ON
-    s->set_ae_level(s, 1);             // +1 (was +2, overexposed)
-    s->set_gainceiling(s, GAINCEILING_8X); // 8x (was 16x, less noise)
   }
 
   Serial.printf("[CAM] Initialized — profile: %s\n",
@@ -122,6 +171,7 @@ void applyProfile(int idx) {
   if (s) {
     s->set_framesize(s, profiles[idx].frameSize);
     s->set_quality(s, profiles[idx].jpegQuality);
+    applyProfileSensorTuning(s, idx);
     Serial.printf("[CAM] Profile set: %s (quality=%d)\n", profiles[idx].name,
                   profiles[idx].jpegQuality);
   }
@@ -134,6 +184,20 @@ void applyProfile(int idx) {
 }
 
 int getCurrentProfile() { return currentProfile; }
+
+const char *getCameraSensorName() { return cameraSensorName; }
+
+uint8_t getCameraQualityBrightnessEstimate() {
+  return lastQuality.brightnessEstimate;
+}
+
+uint8_t getCameraQualityContrastEstimate() {
+  return lastQuality.contrastEstimate;
+}
+
+uint8_t getCameraQualityFlags() { return lastQuality.flags; }
+
+const char *getCameraQualityTuneAction() { return lastQuality.tuneAction; }
 
 // =========================================================================
 // Capture
@@ -154,5 +218,11 @@ camera_fb_t *capturePhoto() {
 
   Serial.printf("[CAM] Photo captured: %u bytes (%s)\n", fb->len,
                 profiles[currentProfile].name);
+  lastQuality =
+      ican_eye_quality::analyzeJpegQuality(fb->buf, fb->len, currentProfile);
+  Serial.printf("[CAM] Quality estimate: brightness=%u contrast=%u flags=%u tune=%s\n",
+                lastQuality.brightnessEstimate, lastQuality.contrastEstimate,
+                lastQuality.flags, lastQuality.tuneAction);
+  applyQualityTune(esp_camera_sensor_get());
   return fb;
 }

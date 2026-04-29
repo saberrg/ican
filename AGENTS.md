@@ -34,3 +34,9 @@ Before TestFlight upload also run firmware and iOS gates listed in `docs/regress
 
 ## Crash Collection
 Keep symbolicated crash logs and Apple account output private/local. Store handoff notes without secrets, API keys, Apple IDs, or user data.
+
+## Development MCPs
+- Use `espressif-docs` for ESP32-S3, BLE, camera, PSRAM, ESP-IDF, and Arduino-ESP32 documentation research.
+- Use `context7` for current Flutter, Dart, package, and SDK API examples before changing package-dependent code.
+- Use `firebase` for Firebase, Crashlytics, App Distribution, Remote Config, and tester workflow research.
+- Do not add or use experimental hardware MCPs for BLE/serial/iOS automation unless the task explicitly requires hardware validation.

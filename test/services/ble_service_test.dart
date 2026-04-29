@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ican/protocol/ble_protocol.dart';
 import 'package:ican/services/app_log_service.dart';
@@ -72,6 +74,39 @@ void main() {
     final logs = await AppLogService.instance.exportText();
     expect(logs, contains('Eye control notification: STATUS:1:BALANCED'));
     expect(logs, contains('Eye STATUS round trip verified'));
+    expect(
+      logs,
+      contains('keeping current camera profile until Describe or Live policy'),
+    );
+    expect(logs, isNot(contains('BALANCED describe')));
+  });
+
+  test('extended STATUS fields are parsed for hardware diagnostics', () async {
+    SharedPreferences.setMockInitialValues({});
+
+    BleService.instance.handleEyeControlMessageForTesting(
+      'STATUS:0:FAST:IDLE:1500:1.0.0+26:8123456:247:240:none:OV3660:12345:890:52:5:61:44:boost_light_contrast',
+    );
+
+    final status = BleService.instance.lastEyeStatus!;
+    expect(status.profileIndex, EyeProfileIndex.fast);
+    expect(status.profileName, 'FAST');
+    expect(status.freePsramBytes, 8123456);
+    expect(status.negotiatedMtu, 247);
+    expect(status.payloadCap, 240);
+    expect(status.lastError, 'none');
+    expect(status.cameraSensor, 'OV3660');
+    expect(status.lastStreamBytes, 12345);
+    expect(status.lastStreamMs, 890);
+    expect(status.lastStreamChunks, 52);
+    expect(status.qualityFlags, 5);
+    expect(status.brightnessEstimate, 61);
+    expect(status.contrastEstimate, 44);
+    expect(status.tuneAction, 'boost_light_contrast');
+    expect(status.hasDimFrame, isTrue);
+    expect(status.hasLowContrastFrame, isTrue);
+    expect(status.hasImageQualityIssue, isTrue);
+    expect(status.qualityFlagLabel, 'dim,low_contrast');
   });
 
   test('CAPTURE retries once before emitting E01 when Eye is silent', () async {
@@ -131,6 +166,103 @@ void main() {
       logs,
       contains('Eye control notification: ERR:CAMERA_CAPTURE_FAILED'),
     );
+  });
+
+  test(
+    'PROFILE_SET updates current profile and completes matching ack',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      AppLogService.instance.resetForTesting();
+      await AppLogService.instance.init();
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.connected,
+      );
+      BleService.instance.enableEyeCommandLoopbackForTesting(
+        autoProfileAck: false,
+      );
+
+      final setFuture = BleService.instance.setEyeProfile(
+        EyeProfileIndex.balanced,
+        ackTimeout: const Duration(milliseconds: 100),
+      );
+      await Future<void>.delayed(Duration.zero);
+      BleService.instance.handleEyeControlMessageForTesting(
+        'PROFILE_SET:1:BALANCED',
+      );
+      await setFuture;
+
+      expect(
+        BleService.instance.currentEyeProfileIndex,
+        EyeProfileIndex.balanced,
+      );
+      expect(BleService.instance.currentEyeProfileName, 'BALANCED');
+      expect(BleService.instance.currentEyeProfileLabel, 'BALANCED(1)');
+    },
+  );
+
+  test('setEyeProfile skips write when STATUS already matches', () async {
+    SharedPreferences.setMockInitialValues({});
+    AppLogService.instance.resetForTesting();
+    await AppLogService.instance.init();
+    BleService.instance.setEyeConnectionStateForTesting(
+      BleConnectionState.connected,
+    );
+    BleService.instance.updateEyeReadinessForTesting(
+      BleReadinessPhase.ready,
+      requiredCharacteristicsReady: true,
+      commandPathReady: true,
+    );
+    BleService.instance.enableEyeCommandLoopbackForTesting();
+    BleService.instance.handleEyeControlMessageForTesting(
+      'STATUS:1:BALANCED:IDLE:1500:1.0.0+26',
+    );
+
+    await BleService.instance.setEyeProfile(EyeProfileIndex.balanced);
+
+    expect(
+      BleService.instance.eyeCommandsSentForTesting,
+      isNot(contains(EyeCommands.profile(EyeProfileIndex.balanced))),
+    );
+  });
+
+  test('setEyeProfile times out when PROFILE_SET ack is missing', () async {
+    SharedPreferences.setMockInitialValues({});
+    AppLogService.instance.resetForTesting();
+    await AppLogService.instance.init();
+    BleService.instance.setEyeConnectionStateForTesting(
+      BleConnectionState.connected,
+    );
+    BleService.instance.enableEyeCommandLoopbackForTesting(
+      autoProfileAck: false,
+    );
+
+    await expectLater(
+      BleService.instance.setEyeProfile(
+        EyeProfileIndex.balanced,
+        ackTimeout: const Duration(milliseconds: 1),
+      ),
+      throwsA(isA<TimeoutException>()),
+    );
+  });
+
+  test('stream instability queues FAST profile fallback', () async {
+    SharedPreferences.setMockInitialValues({});
+    AppLogService.instance.resetForTesting();
+    await AppLogService.instance.init();
+
+    final diagnosticFuture =
+        BleService.instance.eyeCaptureDiagnosticStream.first;
+
+    BleService.instance.handleEyeControlMessageForTesting(
+      'ERR:STREAM_ABORTED:3:720:1440',
+    );
+
+    final diagnostic = await diagnosticFuture;
+    expect(diagnostic.stableCode, 'Eye E02');
+
+    await Future<void>.delayed(Duration.zero);
+    final logs = await AppLogService.instance.exportText();
+    expect(logs, contains('Eye profile fallback queued: FAST. reason=Eye E02'));
   });
 
   test('Eye disconnect schedules one reconnect, not multiple', () async {
@@ -211,6 +343,15 @@ void main() {
 
       expect(BleService.instance.eyeReadinessStatus.ready, isFalse);
       expect(BleService.instance.eyeReconnectPendingForTesting, isTrue);
+
+      await Future<void>.delayed(Duration.zero);
+      final logs = await AppLogService.instance.exportText();
+      expect(
+        logs,
+        contains(
+          'Eye profile fallback queued: FAST. reason=missed STATUS heartbeat',
+        ),
+      );
     },
   );
 }

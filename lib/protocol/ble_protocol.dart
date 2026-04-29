@@ -196,6 +196,28 @@ class EyeCommands {
   static const String status = 'STATUS';
 }
 
+class EyeProfileIndex {
+  EyeProfileIndex._();
+
+  /// App policy: FAST is used for Safety Describe, Live Detection, and
+  /// recovery. BALANCED is used for Balanced and Reading Describe after Eye
+  /// readiness is clean. QUALITY/MAX are developer diagnostics only.
+  static const int fast = 0;
+  static const int balanced = 1;
+  static const int quality = 2;
+  static const int max = 3;
+
+  static String label(int index) {
+    return switch (index) {
+      fast => 'FAST',
+      balanced => 'BALANCED',
+      quality => 'QUALITY',
+      max => 'MAX',
+      _ => 'UNKNOWN',
+    };
+  }
+}
+
 class EyeEvents {
   EyeEvents._();
 

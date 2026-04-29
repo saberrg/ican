@@ -32,7 +32,8 @@ extern const CameraProfile profiles[];
 // =========================================================================
 
 /**
- * Initialize the camera hardware and apply the default profile (BALANCED).
+ * Initialize the camera hardware and apply the firmware-safe default profile
+ * (FAST). The app may request BALANCED for clean manual Describe captures.
  * Must be called once in setup().
  */
 void initCamera();
@@ -47,6 +48,21 @@ void applyProfile(int idx);
  * Get the currently active profile index.
  */
 int getCurrentProfile();
+
+/**
+ * Return the detected camera sensor name for STATUS diagnostics.
+ */
+const char *getCameraSensorName();
+
+/**
+ * Last lightweight quality metrics captured from the JPEG stream.
+ * Values are best-effort compressed-frame estimates for diagnostics and
+ * next-capture tuning, not calibrated optical measurements.
+ */
+uint8_t getCameraQualityBrightnessEstimate();
+uint8_t getCameraQualityContrastEstimate();
+uint8_t getCameraQualityFlags();
+const char *getCameraQualityTuneAction();
 
 /**
  * Capture a fresh JPEG frame.  Discards a stale frame internally.

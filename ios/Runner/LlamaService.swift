@@ -386,9 +386,15 @@ final class LlamaService {
                 }
 
                 var tid = tokenId
+                var decodeResult = 0
                 withUnsafeMutablePointer(to: &tid) { tidPtr in
                     var batch = llama_batch_get_one(tidPtr, 1)
-                    llama_decode(ctx, batch)
+                    decodeResult = Int(llama_decode(ctx, batch))
+                }
+                if decodeResult != 0 {
+                    llama_memory_clear(llama_get_memory(ctx), false)
+                    onError("Token decode failed: \(decodeResult)")
+                    return
                 }
                 nPast += 1
             }

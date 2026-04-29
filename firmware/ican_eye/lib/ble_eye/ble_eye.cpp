@@ -59,6 +59,11 @@ static volatile int s_paceMs = 8;
 // sendImageChunk to decide whether to widen s_paceMs.
 static volatile bool s_congestionSeenThisChunk = false;
 
+static volatile uint32_t s_lastStreamBytes = 0;
+static volatile uint32_t s_lastStreamMs = 0;
+static volatile uint16_t s_lastStreamChunks = 0;
+static const char *s_lastStreamResult = "none";
+
 static portMUX_TYPE s_cmdMux = portMUX_INITIALIZER_UNLOCKED;
 static EyeCommand pendingCmdType = EYE_CMD_NONE;
 static int pendingCmdProfile = 0;
@@ -296,6 +301,14 @@ uint16_t getBleEyePayloadCap() {
   return (uint16_t)ican_eye_chunk_math::effectivePayloadBytes(s_negotiatedMtu);
 }
 
+uint32_t getBleEyeLastStreamBytes() { return s_lastStreamBytes; }
+
+uint32_t getBleEyeLastStreamMs() { return s_lastStreamMs; }
+
+uint16_t getBleEyeLastStreamChunks() { return s_lastStreamChunks; }
+
+const char *getBleEyeLastStreamResult() { return s_lastStreamResult; }
+
 EyeCommandData getLastEyeCommand() {
   EyeCommandData cmd;
   portENTER_CRITICAL(&s_cmdMux);
@@ -459,6 +472,10 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
     snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:0:0:%u",
              (unsigned)jpegLen);
     sendControlMessage(abortMsg);
+    s_lastStreamBytes = 0;
+    s_lastStreamMs = 0;
+    s_lastStreamChunks = 0;
+    s_lastStreamResult = "mtu_zero";
     Serial.printf("[BLE] Cannot stream image: MTU=%u gives 0 payload bytes\n",
                   s_negotiatedMtu);
     return;
@@ -496,6 +513,7 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
     if (!isBleEyeConnected()) {
       Serial.println("[BLE] Client disconnected mid-stream — aborting.");
       aborted = true;
+      abortReason = "disconnected";
       break;
     }
     if (s_streamAbortRequested) {
@@ -516,6 +534,7 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                  seqNum);
         sendControlMessage(ctrlMsg);
         aborted = true;
+        abortReason = "notify_failed";
         break;
       }
       // Wait for the controller to drain, then retry the SAME chunk.
@@ -552,6 +571,10 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                seqNum, (unsigned)offset, (unsigned)jpegLen);
     }
     sendControlMessage(abortMsg);
+    s_lastStreamBytes = (uint32_t)offset;
+    s_lastStreamMs = (uint32_t)elapsed;
+    s_lastStreamChunks = seqNum;
+    s_lastStreamResult = abortReason ? abortReason : "aborted";
     Serial.printf("[BLE] Stream aborted: %u chunks, %u/%u bytes%s\n",
                   seqNum, (unsigned)offset, (unsigned)jpegLen,
                   abortReason ? " (user)" : "");
@@ -568,6 +591,10 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
   }
 
   const float kbps = (elapsed > 0) ? (jpegLen / 1024.0f) / (elapsed / 1000.0f) : 0;
+  s_lastStreamBytes = (uint32_t)offset;
+  s_lastStreamMs = (uint32_t)elapsed;
+  s_lastStreamChunks = seqNum;
+  s_lastStreamResult = "ok";
   Serial.printf("[BLE] Transfer complete: %u chunks, %u bytes in %lu ms "
                 "(%.1f KB/s, %d retried, pace=%dms)\n",
                 seqNum, (unsigned)offset, elapsed, kbps, consecutiveFails,

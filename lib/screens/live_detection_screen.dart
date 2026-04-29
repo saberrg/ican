@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
 import '../models/settings_provider.dart';
+import '../protocol/ble_protocol.dart';
 import '../services/app_log_service.dart';
 import '../services/ble_service.dart';
 import '../services/on_device_vision_service.dart';
@@ -43,7 +44,7 @@ class _DetectionEvent {
   });
 }
 
-enum _LiveDetectionMode { full, basic }
+enum _LiveDetectionMode { full, basic, eyeAssisted }
 
 class LiveDetectionScreen extends StatefulWidget {
   const LiveDetectionScreen({super.key});
@@ -148,11 +149,12 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       if (!mounted) return;
       setState(() {
         _checkingPrereqs = false;
-        _errorMessage = 'Live Detection is unavailable on this iPhone.';
-        _errorHint = nativeReady
-            ? 'Apple Vision is unavailable on this device.'
-            : 'Native vision channel is not registered.';
+        _mode = _LiveDetectionMode.eyeAssisted;
+        _modeHint = nativeReady
+            ? 'Eye-assisted live mode: Apple Vision is unavailable, so object detection is paused.'
+            : 'Eye-assisted live mode: native vision is unavailable, so object detection is paused.';
       });
+      _startCaptureLoop();
       return;
     }
 
@@ -162,9 +164,12 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       _mode = status.objectDetectionAvailable
           ? _LiveDetectionMode.full
           : _LiveDetectionMode.basic;
-      _modeHint = _mode == _LiveDetectionMode.basic
-          ? 'Basic live mode: ${diagnostics.objectDetector.message}'
-          : null;
+      _modeHint = switch (_mode) {
+        _LiveDetectionMode.basic =>
+          'Basic live mode: ${diagnostics.objectDetector.message}',
+        _LiveDetectionMode.full => null,
+        _LiveDetectionMode.eyeAssisted => _modeHint,
+      };
     });
     _startCaptureLoop();
   }
@@ -174,7 +179,9 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       SemanticsService.announce(
         _mode == _LiveDetectionMode.full
             ? 'Full live detection started. Objects will be announced as they are detected.'
-            : 'Basic live mode started. Text, people, and scene cues will be announced.',
+            : _mode == _LiveDetectionMode.basic
+            ? 'Basic live mode started. Text, people, and scene cues will be announced.'
+            : 'Eye-assisted live mode started. Camera frames and Eye health will be monitored.',
         TextDirection.ltr,
       );
     });
@@ -197,7 +204,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
         )
         .listen((_) => _handleEyeDisconnected());
 
-    await _ble.setEyeProfile(0);
+    await _ble.setEyeProfile(EyeProfileIndex.fast);
     await _ble.startLiveCapture(intervalMs: 1500);
     // Transition into transferring so the first incoming chunk is accepted.
     _setLive(LiveState.transferring);
@@ -213,6 +220,10 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
 
     if (mounted) {
       setState(() => _latestImage = imageBytes);
+    }
+    if (_mode == _LiveDetectionMode.eyeAssisted) {
+      _handleEyeAssistedFrame();
+      return;
     }
     if (!_setLive(LiveState.analyzing)) return;
 
@@ -398,6 +409,25 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
     });
   }
 
+  void _handleEyeAssistedFrame() {
+    final now = DateTime.now();
+    final status = _ble.lastEyeStatus;
+    final label = status == null
+        ? 'Camera frame received'
+        : 'Camera frame received; quality ${status.qualityFlagLabel}';
+    final lastTime = _lastAnnounced[label];
+    if (lastTime == null ||
+        now.difference(lastTime) >= const Duration(seconds: 6)) {
+      _lastAnnounced[label] = now;
+      _addLogEntry(label, '', 1, now);
+    }
+    _setLive(LiveState.cooldown);
+    Future<void>.delayed(_cooldownDuration, () {
+      if (!mounted) return;
+      if (_state == LiveState.cooldown) _setLive(LiveState.transferring);
+    });
+  }
+
   static String _positionFromCenterX(double cx) {
     if (cx < 0.33) return 'on your left';
     if (cx < 0.66) return 'ahead';
@@ -433,7 +463,6 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       // Best-effort: abort any in-flight transfer, stop live mode on the Eye.
       unawaited(_ble.sendEyeAbort());
       unawaited(_ble.stopLiveCapture());
-      unawaited(_ble.setEyeProfile(1));
     }
     _imageSub?.cancel();
     _imageSub = null;
@@ -523,7 +552,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            if (_mode == _LiveDetectionMode.basic) _buildBasicModeBanner(),
+            if (_mode != _LiveDetectionMode.full) _buildBasicModeBanner(),
 
             // Image + bounding box overlay
             Expanded(flex: 3, child: _buildImageArea()),
@@ -577,6 +606,8 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
     return Semantics(
       label: _mode == _LiveDetectionMode.basic
           ? 'Camera feed. Basic live mode active.'
+          : _mode == _LiveDetectionMode.eyeAssisted
+          ? 'Camera feed. Eye-assisted live mode active.'
           : _detections.isEmpty
           ? 'Camera feed. No objects detected.'
           : 'Camera feed. ${_detections.length} objects detected.',
@@ -642,6 +673,8 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
               child: Text(
                 _mode == _LiveDetectionMode.basic
                     ? 'Basic Live Log'
+                    : _mode == _LiveDetectionMode.eyeAssisted
+                    ? 'Eye Live Log'
                     : 'Detection Log',
                 style: TextStyle(
                   fontSize: 14.sp,

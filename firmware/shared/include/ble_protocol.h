@@ -119,7 +119,7 @@ static_assert(sizeof(GpsPacket) == 19, "GpsPacket must be 19 bytes");
 // Events (Eye → App, notified on same characteristic):
 //   "BUTTON:DOUBLE"         — physical button double-press detected
 //   "CAPTURE:START"         - capture accepted and camera capture starting
-//   "STATUS:{idx}:{name}:{IDLE|LIVE}:{ms}:{firmware}:{freePsram}:{mtu}:{payloadCap}:{lastError}" - status response
+//   "STATUS:{idx}:{name}:{IDLE|LIVE}:{ms}:{firmware}:{freePsram}:{mtu}:{payloadCap}:{lastError}:{sensor}:{lastBytes}:{lastMs}:{lastChunks}:{qualityFlags}:{brightness}:{contrast}:{tune}" - status response; fields after firmware are optional
 //   "SIZE:{bytes}", "CRC:{hex}", "END:{chunks}" - image transfer control
 //   "ERR:{code}"            — command error
 
@@ -134,6 +134,15 @@ constexpr uint16_t IMAGE_MAX_PACKET_SIZE = 512;
 // ERR:CHUNK_NOTIFY_FAILED at 97%+ completion. The Flutter assembler reads the
 // actual chunk size per packet, so this is safe below IMAGE_MAX_PAYLOAD.
 constexpr uint16_t EYE_IMAGE_FIRMWARE_PAYLOAD_CAP = 240;
+
+constexpr uint8_t EYE_PROFILE_FAST = 0;
+constexpr uint8_t EYE_PROFILE_BALANCED = 1;
+constexpr uint8_t EYE_PROFILE_QUALITY = 2;
+constexpr uint8_t EYE_PROFILE_MAX = 3;
+// App policy: FAST is used for Safety Describe, Live Detection, and recovery
+// after E02/E03/E04 or missed STATUS heartbeat. BALANCED is used for Balanced
+// and Reading Describe after a clean readiness path. QUALITY/MAX remain
+// diagnostics only; no new wire commands are needed for this policy.
 
 // ===========================================================================
 // Eye Command String Literals (App → Eye via eye_capture_rx, WRITE)

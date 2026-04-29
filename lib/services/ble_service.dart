@@ -99,6 +99,14 @@ class EyeStatus {
     this.negotiatedMtu,
     this.payloadCap,
     this.lastError,
+    this.cameraSensor,
+    this.lastStreamBytes,
+    this.lastStreamMs,
+    this.lastStreamChunks,
+    this.qualityFlags,
+    this.brightnessEstimate,
+    this.contrastEstimate,
+    this.tuneAction,
   });
 
   factory EyeStatus.parse(String message) {
@@ -118,6 +126,14 @@ class EyeStatus {
       negotiatedMtu: intAt(7),
       payloadCap: intAt(8),
       lastError: stringAt(9),
+      cameraSensor: stringAt(10),
+      lastStreamBytes: intAt(11),
+      lastStreamMs: intAt(12),
+      lastStreamChunks: intAt(13),
+      qualityFlags: intAt(14),
+      brightnessEstimate: intAt(15),
+      contrastEstimate: intAt(16),
+      tuneAction: stringAt(17),
     );
   }
 
@@ -131,6 +147,38 @@ class EyeStatus {
   final int? negotiatedMtu;
   final int? payloadCap;
   final String? lastError;
+  final String? cameraSensor;
+  final int? lastStreamBytes;
+  final int? lastStreamMs;
+  final int? lastStreamChunks;
+  final int? qualityFlags;
+  final int? brightnessEstimate;
+  final int? contrastEstimate;
+  final String? tuneAction;
+
+  bool get hasDimFrame => ((qualityFlags ?? 0) & 0x01) != 0;
+  bool get hasBrightFrame => ((qualityFlags ?? 0) & 0x02) != 0;
+  bool get hasLowContrastFrame => ((qualityFlags ?? 0) & 0x04) != 0;
+  bool get hasLargeJpeg => ((qualityFlags ?? 0) & 0x08) != 0;
+  bool get hasImageQualityIssue =>
+      hasDimFrame || hasBrightFrame || hasLowContrastFrame;
+
+  String get qualityFlagLabel {
+    final labels = <String>[
+      if (hasDimFrame) 'dim',
+      if (hasBrightFrame) 'bright',
+      if (hasLowContrastFrame) 'low_contrast',
+      if (hasLargeJpeg) 'large_jpeg',
+    ];
+    return labels.isEmpty ? 'ok' : labels.join(',');
+  }
+}
+
+class _ProfileSetAck {
+  const _ProfileSetAck(this.index, this.name);
+
+  final int index;
+  final String name;
 }
 
 enum _FlutterScanOwner { eye, cane }
@@ -183,6 +231,17 @@ class BleService extends ChangeNotifier {
   BleReadinessStatus get eyeReadinessStatus => _eyeReadinessStatus;
   EyeStatus? _lastEyeStatus;
   EyeStatus? get lastEyeStatus => _lastEyeStatus;
+  int? _currentEyeProfileIndex;
+  String? _currentEyeProfileName;
+  int? get currentEyeProfileIndex => _currentEyeProfileIndex;
+  String? get currentEyeProfileName => _currentEyeProfileName;
+  String? get currentEyeProfileLabel {
+    final index = _currentEyeProfileIndex;
+    final name = _currentEyeProfileName;
+    if (index == null) return name;
+    if (name == null || name.isEmpty) return EyeProfileIndex.label(index);
+    return '$name($index)';
+  }
 
   BluetoothDevice? _connectedDevice;
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
@@ -263,6 +322,12 @@ class BleService extends ChangeNotifier {
   int _eyeReconnectAttempt = 0;
   int _missedEyeHeartbeats = 0;
   String? _preferredEyeDeviceId;
+  bool _eyeNeedsFastRecoveryProfile = false;
+  Duration _eyeProfileAckTimeout = const Duration(milliseconds: 750);
+  final Map<int, Completer<void>> _profileAckCompleters = {};
+  bool _loopbackEyeCommandsForTesting = false;
+  bool _loopbackProfileAckForTesting = true;
+  final List<String> _eyeCommandsSentForTesting = [];
 
   static const Duration _imageTransferTimeout = Duration(seconds: 45);
   static const Duration _captureResponseTimeout = Duration(seconds: 3);
@@ -1459,7 +1524,22 @@ class BleService extends ChangeNotifier {
 
     if (message.startsWith(EyeEvents.statusPrefix)) {
       _lastEyeStatus = EyeStatus.parse(message);
+      _updateCurrentEyeProfile(
+        _lastEyeStatus?.profileIndex,
+        _lastEyeStatus?.profileName,
+      );
       _markEyeCommandPathReady(message);
+    }
+
+    if (message.startsWith(EyeEvents.profileSetPrefix)) {
+      final ack = _parseProfileSet(message);
+      if (ack != null) {
+        _updateCurrentEyeProfile(ack.index, ack.name);
+        final completer = _profileAckCompleters.remove(ack.index);
+        if (completer != null && !completer.isCompleted) {
+          completer.complete();
+        }
+      }
     }
 
     if (message.startsWith('BUTTON:')) {
@@ -1517,6 +1597,47 @@ class BleService extends ChangeNotifier {
   @visibleForTesting
   void handleEyeControlMessageForTesting(String message) {
     _handleEyeControlMessage(message);
+  }
+
+  @visibleForTesting
+  void emitEyeImageForTesting(Uint8List imageBytes) {
+    _imageController.add(imageBytes);
+  }
+
+  @visibleForTesting
+  void setLastEyeStatusForTesting(String message) {
+    _lastEyeStatus = EyeStatus.parse(message);
+    _updateCurrentEyeProfile(
+      _lastEyeStatus?.profileIndex,
+      _lastEyeStatus?.profileName,
+    );
+  }
+
+  _ProfileSetAck? _parseProfileSet(String message) {
+    final parts = message.split(':');
+    if (parts.length < 2) return null;
+    final index = int.tryParse(parts[1]);
+    if (index == null) return null;
+    return _ProfileSetAck(
+      index,
+      parts.length > 2 && parts[2].isNotEmpty
+          ? parts[2]
+          : EyeProfileIndex.label(index),
+    );
+  }
+
+  void _updateCurrentEyeProfile(int? index, String? name) {
+    if (index == null && (name == null || name.isEmpty)) return;
+    _currentEyeProfileIndex = index;
+    _currentEyeProfileName = name;
+    _recordBleLog(
+      'Eye profile state updated: ${currentEyeProfileLabel ?? 'unknown'}.',
+    );
+  }
+
+  int? _profileIndexFromCommand(String command) {
+    if (!command.startsWith('PROFILE:')) return null;
+    return int.tryParse(command.substring('PROFILE:'.length));
   }
 
   @visibleForTesting
@@ -1663,6 +1784,7 @@ class BleService extends ChangeNotifier {
     _recordBleLog('Eye heartbeat STATUS missed=$_missedEyeHeartbeats.');
     if (_missedEyeHeartbeats >= 2) {
       _recordBleLog('Eye heartbeat missed twice; marking Eye not ready.');
+      _queueFastProfileRecovery('missed STATUS heartbeat');
       _updateEyeReadiness(
         BleReadinessPhase.failed,
         requiredCharacteristicsReady:
@@ -1813,6 +1935,18 @@ class BleService extends ChangeNotifier {
       'ready=${_eyeReadinessStatus.ready} '
       'requiredChars=${_eyeReadinessStatus.requiredCharacteristicsReady}',
     );
+    if (_loopbackEyeCommandsForTesting) {
+      _eyeCommandsSentForTesting.add(cmd);
+      final profileIndex = _profileIndexFromCommand(cmd);
+      if (_loopbackProfileAckForTesting && profileIndex != null) {
+        scheduleMicrotask(() {
+          _handleEyeControlMessage(
+            '${EyeEvents.profileSetPrefix}$profileIndex:${EyeProfileIndex.label(profileIndex)}',
+          );
+        });
+      }
+      return;
+    }
     if (Platform.isWindows) {
       if (_connectedWindowsMac == null) return;
       try {
@@ -1894,8 +2028,48 @@ class BleService extends ChangeNotifier {
 
   /// Send a camera profile change command to the Eye.
   /// Profile indices: 0=FAST, 1=BALANCED, 2=QUALITY, 3=MAX
-  Future<void> setEyeProfile(int profileIndex) =>
-      _sendEyeCommand(EyeCommands.profile(profileIndex));
+  Future<void> setEyeProfile(int profileIndex, {Duration? ackTimeout}) async {
+    if (profileIndex < EyeProfileIndex.fast ||
+        profileIndex > EyeProfileIndex.max) {
+      throw ArgumentError.value(profileIndex, 'profileIndex');
+    }
+    if (_currentEyeProfileIndex == profileIndex &&
+        _eyeReadinessStatus.commandPathReady) {
+      _recordBleLog(
+        'Eye profile already ${EyeProfileIndex.label(profileIndex)}; '
+        'skipping profile command.',
+      );
+      return;
+    }
+    final existing = _profileAckCompleters[profileIndex];
+    if (existing != null && !existing.isCompleted) {
+      _recordBleLog(
+        'Eye profile request already pending: '
+        '${EyeProfileIndex.label(profileIndex)}.',
+      );
+      await existing.future.timeout(ackTimeout ?? _eyeProfileAckTimeout);
+      return;
+    }
+    final completer = Completer<void>();
+    _profileAckCompleters[profileIndex] = completer;
+    await _sendEyeCommand(EyeCommands.profile(profileIndex));
+    try {
+      await completer.future.timeout(ackTimeout ?? _eyeProfileAckTimeout);
+    } on TimeoutException {
+      if (identical(_profileAckCompleters[profileIndex], completer)) {
+        _profileAckCompleters.remove(profileIndex);
+      }
+      _recordBleLog(
+        'Eye profile ack timeout: ${EyeProfileIndex.label(profileIndex)}.',
+      );
+      rethrow;
+    } catch (_) {
+      if (identical(_profileAckCompleters[profileIndex], completer)) {
+        _profileAckCompleters.remove(profileIndex);
+      }
+      rethrow;
+    }
+  }
 
   Future<void> requestEyeStatus() => _sendEyeCommand(EyeCommands.status);
 
@@ -1935,12 +2109,43 @@ class BleService extends ChangeNotifier {
     _stopEyeHeartbeat();
     _eyeReconnectAttempt = 0;
     _missedEyeHeartbeats = 0;
+    _eyeNeedsFastRecoveryProfile = false;
+    _currentEyeProfileIndex = null;
+    _currentEyeProfileName = null;
+    _lastEyeStatus = null;
+    _lastControlMessage = '';
+    _lastControlMessageTime = null;
+    for (final completer in _profileAckCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('BLE reliability reset.'));
+      }
+    }
+    _profileAckCompleters.clear();
+    _eyeProfileAckTimeout = const Duration(milliseconds: 750);
+    _loopbackEyeCommandsForTesting = false;
+    _loopbackProfileAckForTesting = true;
+    _eyeCommandsSentForTesting.clear();
     // The Eye capture diagnostic is cached for the Vision Diagnostic screen,
     // so clearing it between tests avoids a prior test's E0x leaking into the
     // next case's assertions on lastEyeCaptureDiagnostic.
     _lastEyeCaptureDiagnostic = null;
     _imageAssembler.reset();
   }
+
+  @visibleForTesting
+  void setEyeProfileAckTimeoutForTesting(Duration timeout) {
+    _eyeProfileAckTimeout = timeout;
+  }
+
+  @visibleForTesting
+  void enableEyeCommandLoopbackForTesting({bool autoProfileAck = true}) {
+    _loopbackEyeCommandsForTesting = true;
+    _loopbackProfileAckForTesting = autoProfileAck;
+  }
+
+  @visibleForTesting
+  List<String> get eyeCommandsSentForTesting =>
+      List.unmodifiable(_eyeCommandsSentForTesting);
 
   // ---------------------------------------------------------------------------
   // Internal
@@ -1980,6 +2185,38 @@ class BleService extends ChangeNotifier {
       '${context == null ? '' : '$context '}'
       'Eye diagnostic ${diagnostic.stableCode}: $message',
     );
+    _queueFastProfileRecoveryForDiagnostic(diagnostic);
+  }
+
+  void _queueFastProfileRecoveryForDiagnostic(EyeCaptureDiagnostic diagnostic) {
+    switch (diagnostic.code) {
+      case EyeCaptureDiagnosticCode.streamStalled:
+      case EyeCaptureDiagnosticCode.corruptOrIncompleteJpeg:
+      case EyeCaptureDiagnosticCode.crcMismatch:
+        _queueFastProfileRecovery(diagnostic.stableCode);
+        break;
+      case EyeCaptureDiagnosticCode.noCaptureStartOrSize:
+      case EyeCaptureDiagnosticCode.cameraCaptureFailed:
+        break;
+    }
+  }
+
+  void _queueFastProfileRecovery(String reason) {
+    _eyeNeedsFastRecoveryProfile = true;
+    _recordBleLog('Eye profile fallback queued: FAST. reason=$reason');
+    final canWriteEyeCommand = Platform.isWindows
+        ? _connectedWindowsMac != null
+        : _eyeCaptureRxChar != null;
+    if (_state == BleConnectionState.connected &&
+        (canWriteEyeCommand || _loopbackEyeCommandsForTesting)) {
+      unawaited(
+        setEyeProfile(EyeProfileIndex.fast).catchError((Object error) {
+          _recordBleLog(
+            'Eye FAST recovery profile request did not ack: ${error.runtimeType}.',
+          );
+        }),
+      );
+    }
   }
 
   void _recordBleLog(String message) {
@@ -2014,7 +2251,21 @@ class BleService extends ChangeNotifier {
     );
     _eyeReconnectAttempt = 0;
     _startEyeHeartbeat();
-    unawaited(setEyeProfile(1));
+    if (_eyeNeedsFastRecoveryProfile) {
+      _recordBleLog('Eye ready profile policy: FAST reason=recovery.');
+      _eyeNeedsFastRecoveryProfile = false;
+      unawaited(
+        setEyeProfile(EyeProfileIndex.fast).catchError((Object error) {
+          _recordBleLog(
+            'Eye ready FAST profile request did not ack: ${error.runtimeType}.',
+          );
+        }),
+      );
+    } else {
+      _recordBleLog(
+        'Eye ready; keeping current camera profile until Describe or Live policy selects one.',
+      );
+    }
   }
 
   void _updateEyeReadiness(
@@ -2081,6 +2332,8 @@ class BleService extends ChangeNotifier {
     }
     _state = newState;
     if (newState == BleConnectionState.disconnected) {
+      _currentEyeProfileIndex = null;
+      _currentEyeProfileName = null;
       _updateEyeReadiness(BleReadinessPhase.idle);
     }
     notifyListeners();

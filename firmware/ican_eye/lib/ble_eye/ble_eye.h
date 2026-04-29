@@ -63,12 +63,22 @@ EyeCommandData getLastEyeCommand();
  * Send a status/control message to the connected client via the
  * control (capture) characteristic as a notify.
  * Examples: "SIZE:12345", "END:42", "STATUS:1:BALANCED:IDLE:1500"
+ * STATUS may append diagnostics such as PSRAM, MTU, stream stats, and camera
+ * quality estimates; app parsing keeps those trailing fields optional.
  */
 void sendControlMessage(const char *msg);
 
 uint16_t getBleEyeNegotiatedMtu();
 
 uint16_t getBleEyePayloadCap();
+
+uint32_t getBleEyeLastStreamBytes();
+
+uint32_t getBleEyeLastStreamMs();
+
+uint16_t getBleEyeLastStreamChunks();
+
+const char *getBleEyeLastStreamResult();
 
 /**
  * Send a single image data chunk to the connected client.

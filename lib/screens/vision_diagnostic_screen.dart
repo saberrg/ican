@@ -43,6 +43,14 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
         'MTU: ${eyeStatus.negotiatedMtu ?? 0}',
         'Payload cap: ${eyeStatus.payloadCap ?? 0}',
         'Last Eye error: ${eyeStatus.lastError ?? 'none'}',
+        'Camera sensor: ${eyeStatus.cameraSensor ?? 'unknown'}',
+        'Last stream: ${eyeStatus.lastStreamBytes ?? 0} bytes, '
+            '${eyeStatus.lastStreamChunks ?? 0} chunks, '
+            '${eyeStatus.lastStreamMs ?? 0} ms',
+        'Image quality: ${eyeStatus.qualityFlagLabel}',
+        'Brightness estimate: ${eyeStatus.brightnessEstimate ?? 0}',
+        'Contrast estimate: ${eyeStatus.contrastEstimate ?? 0}',
+        'Eye tune: ${eyeStatus.tuneAction ?? 'unknown'}',
       ]);
     }
 
@@ -51,9 +59,21 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       final appleVision = nativeReady && await _vision.isAppleVisionAvailable();
       final offline = await _vision.getOfflineVisionStatus();
       final nativeModels = await _vision.getOfflineVisionDiagnostics();
+      var smolVlmLoad = 'skipped';
+      if (offline.modelStatus == ModelStatus.loaded) {
+        smolVlmLoad = 'already loaded';
+      } else if (offline.modelStatus == ModelStatus.ready) {
+        final loaded = await _vision.loadVlmModel();
+        smolVlmLoad = loaded ? 'loaded successfully' : 'load failed';
+      }
       lines.addAll([
         'Native channel: ${nativeReady ? 'ready' : 'unavailable'}',
         'Apple Vision: ${appleVision ? 'ready' : 'unavailable'}',
+        'Foundation Models: ${offline.foundationModelsAvailable ? 'ready' : 'unavailable'}',
+        'SmolVLM2 status: ${_modelStatusLabel(offline.modelStatus)}',
+        'SmolVLM2 load: $smolVlmLoad',
+        'Vision template fallback: ${appleVision ? 'ready' : 'unavailable'}',
+        'Best local backend: ${offline.bestLocalBackendLabel}',
         'YOLOv3 Tiny: ${offline.objectDetectionAvailable ? 'ready' : 'unavailable'}',
         'Depth Anything: ${offline.depthEstimationAvailable ? 'ready' : 'unavailable'}',
         'YOLO detail: ${nativeModels.objectDetector.message}',
@@ -68,6 +88,21 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       _report = lines.join('\n');
       _running = false;
     });
+  }
+
+  String _modelStatusLabel(ModelStatus status) {
+    switch (status) {
+      case ModelStatus.notAvailable:
+        return 'runtime unavailable';
+      case ModelStatus.notDownloaded:
+        return 'not downloaded';
+      case ModelStatus.downloading:
+        return 'downloading';
+      case ModelStatus.ready:
+        return 'downloaded';
+      case ModelStatus.loaded:
+        return 'loaded';
+    }
   }
 
   @override

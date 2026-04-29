@@ -11,6 +11,7 @@ import '../services/ble_service.dart';
 import '../services/live_detection_controller.dart';
 import '../services/on_device_vision_service.dart';
 import '../services/scene_description_service.dart';
+import '../services/scene_prompt_builder.dart';
 import '../services/tts_service.dart';
 import '../services/vertex_ai_service.dart';
 import '../services/vision_health_service.dart';
@@ -82,6 +83,7 @@ class HomeViewModel extends ChangeNotifier {
   String _lastDiagnostic = '';
   DescribeAttemptTrace? _currentTrace;
   String? _lastBleAnnouncementKey;
+  bool _qualityRetryUsed = false;
 
   // ── Live vision mode state ──
   bool get liveVisionActive => _liveController.active;
@@ -241,7 +243,8 @@ class HomeViewModel extends ChangeNotifier {
     if (_disposed || trace == null) return;
     final message =
         'Previous Describe did not finish. Last stage: ${trace.stage.label}. '
-        'Mode: ${trace.visionMode}. Detail: ${trace.detailLevel}.';
+        'Mode: ${trace.visionMode}. Detail: ${trace.detailLevel}. '
+        'Profile: ${trace.promptProfile}.';
     _setLastDiagnostic(
       trace.lastError == null ? message : '$message ${trace.lastError}',
     );
@@ -374,26 +377,20 @@ class HomeViewModel extends ChangeNotifier {
     _pendingDescribeFlow = flow;
     _isProcessing = true;
     _waitingForCaptureImage = true;
+    _qualityRetryUsed = false;
     notifyListeners();
-    unawaited(
-      _beginDescribeTrace(
-        DescribePipelineStage.captureRequested,
-        imageBytes: 0,
-      ),
-    );
     _recordDescribeLog(
       'Describe requested. readiness=${readiness.phase.name} '
       'ready=${readiness.ready} '
       'requiredChars=${readiness.requiredCharacteristicsReady} '
-      'flow=${flow.name}',
+      'flow=${flow.name} promptProfile=${settingsProvider.promptProfile.name} '
+      'hazardSensitivity=${settingsProvider.hazardSensitivity.name}',
     );
-    _startProcessingTimeout(cameraTransfer: true);
     unawaited(
-      BleService.instance.triggerEyeCapture().catchError((Object error) {
-        _recordDescribeLog(
-          'Capture command future failed: ${error.runtimeType}.',
-        );
-      }),
+      _beginDescribeTrace(
+        DescribePipelineStage.captureRequested,
+        imageBytes: 0,
+      ).then((_) => _requestEyeProfileAndCapture(flow)),
     );
     return _describeNowCompleter!.future;
   }
@@ -457,24 +454,60 @@ class HomeViewModel extends ChangeNotifier {
     _startProcessingTimeout();
 
     try {
-      await _updateDescribeTrace(DescribePipelineStage.imageEnhancement);
-      var enhancedBytes = imageBytes;
-      try {
-        enhancedBytes = await compute(_enhanceImageForApi, imageBytes);
-      } catch (e) {
-        debugPrint('[HomeViewModel] Image enhancement failed: $e');
-        await _updateDescribeTrace(
-          DescribePipelineStage.imageEnhancement,
-          lastError: 'Image enhancement failed; using original JPEG.',
+      final SceneDescriptionResult result;
+      if (flow == _DescribeFlow.cloud) {
+        await _updateDescribeTrace(DescribePipelineStage.imageEnhancement);
+        var enhancedBytes = imageBytes;
+        try {
+          enhancedBytes = await compute(_enhanceImageForApi, imageBytes);
+        } catch (e) {
+          debugPrint('[HomeViewModel] Image enhancement failed: $e');
+          await _updateDescribeTrace(
+            DescribePipelineStage.imageEnhancement,
+            lastError: 'Image enhancement failed; using original JPEG.',
+          );
+        }
+        await _updateDescribeTrace(DescribePipelineStage.cloudRequest);
+        result = await sceneService.describeCloud(
+          enhancedBytes,
+          promptContext: _scenePromptContext(),
+        );
+      } else {
+        await _updateDescribeTrace(DescribePipelineStage.offlineRequest);
+        result = await sceneService.describeOffline(
+          imageBytes,
+          promptContext: _scenePromptContext(),
         );
       }
-      await _updateDescribeTrace(DescribePipelineStage.cloudRequest);
-      final result = flow == _DescribeFlow.cloud
-          ? await sceneService.describeCloud(enhancedBytes)
-          : await sceneService.describeOffline(enhancedBytes);
 
       final fullText = _isPaused ? '' : result.text.trim();
-      if (fullText.isNotEmpty) {
+      var recaptureQueued = false;
+      if (!_isPaused && _shouldRetryAfterEyeQualityTune(fullText)) {
+        recaptureQueued = true;
+        _qualityRetryUsed = true;
+        _recordDescribeLog(
+          'Describe queued one Eye quality retry. '
+          'flags=${BleService.instance.lastEyeStatus?.qualityFlagLabel ?? 'unknown'} '
+          'tune=${BleService.instance.lastEyeStatus?.tuneAction ?? 'unknown'}.',
+        );
+        await _updateDescribeTrace(
+          DescribePipelineStage.captureRequested,
+          lastError: 'Retrying once after Eye image-quality tune.',
+        );
+        _waitingForCaptureImage = true;
+        _isProcessing = true;
+        notifyListeners();
+        _startProcessingTimeout(cameraTransfer: true);
+        unawaited(
+          BleService.instance.triggerEyeCapture().catchError((Object error) {
+            _recordDescribeLog(
+              'Quality retry capture command future failed: '
+              '${error.runtimeType}.',
+            );
+          }),
+        );
+      }
+      if (fullText.isNotEmpty && !recaptureQueued) {
         if (!_isPaused) {
           await _updateDescribeTrace(DescribePipelineStage.speech);
           try {
@@ -497,6 +530,29 @@ class HomeViewModel extends ChangeNotifier {
         );
         await _updateDescribeTrace(DescribePipelineStage.completed);
         _completeDescribeNow('Scene description complete.');
+      } else if (!recaptureQueued &&
+          _shouldRetryAfterEyeQualityTune(fullText)) {
+        _qualityRetryUsed = true;
+        _recordDescribeLog(
+          'Describe produced no output; retrying Eye capture.',
+        );
+        await _updateDescribeTrace(
+          DescribePipelineStage.captureRequested,
+          lastError: 'Retrying once after empty output and Eye quality flag.',
+        );
+        _waitingForCaptureImage = true;
+        _isProcessing = true;
+        notifyListeners();
+        _startProcessingTimeout(cameraTransfer: true);
+        unawaited(
+          BleService.instance.triggerEyeCapture().catchError((Object error) {
+            _recordDescribeLog(
+              'Quality retry capture command future failed: '
+              '${error.runtimeType}.',
+            );
+          }),
+        );
+        recaptureQueued = true;
       }
     } catch (e) {
       debugPrint('[HomeViewModel] Error processing image: $e');
@@ -506,13 +562,15 @@ class HomeViewModel extends ChangeNotifier {
       );
       await _speakProcessingError(e);
     } finally {
-      _isProcessing = false;
-      _waitingForCaptureImage = false;
-      _pendingDescribeFlow = null;
-      _processingTimeout?.cancel();
-      if (_describeNowCompleter != null &&
-          !_describeNowCompleter!.isCompleted) {
-        _completeDescribeNow('Scene description produced no output.');
+      if (!_waitingForCaptureImage) {
+        _isProcessing = false;
+        _pendingDescribeFlow = null;
+        _qualityRetryUsed = false;
+        _processingTimeout?.cancel();
+        if (_describeNowCompleter != null &&
+            !_describeNowCompleter!.isCompleted) {
+          _completeDescribeNow('Scene description produced no output.');
+        }
       }
       notifyListeners();
     }
@@ -530,6 +588,19 @@ class HomeViewModel extends ChangeNotifier {
       return _CapturedImageFailure.incomplete;
     }
     return null;
+  }
+
+  bool _shouldRetryAfterEyeQualityTune(String text) {
+    if (_qualityRetryUsed) return false;
+    final status = BleService.instance.lastEyeStatus;
+    if (status == null || !status.hasImageQualityIssue) return false;
+    final normalized = text.toLowerCase();
+    if (normalized.trim().isEmpty) return true;
+    return normalized.contains('unclear') ||
+        normalized.contains('could not be clearly identified') ||
+        normalized.contains('scene analysis unavailable') ||
+        normalized.contains('too dark') ||
+        normalized.contains('low contrast');
   }
 
   Future<void> _speakImageFailure(
@@ -553,6 +624,71 @@ class HomeViewModel extends ChangeNotifier {
       lastError: diagnostic.spokenMessage,
     );
     await _speakEyeCaptureDiagnostic(diagnostic);
+  }
+
+  Future<void> _requestEyeProfileAndCapture(_DescribeFlow flow) async {
+    final requestedProfile = _eyeProfileForDescribe(
+      settingsProvider.promptProfile,
+    );
+    final requestedLabel = _eyeProfileLabel(requestedProfile);
+    await _updateDescribeTrace(
+      DescribePipelineStage.captureRequested,
+      requestedEyeProfile: requestedLabel,
+    );
+    _recordDescribeLog(
+      'Eye profile requested for Describe: $requestedLabel '
+      'promptProfile=${settingsProvider.promptProfile.name} flow=${flow.name}.',
+    );
+    try {
+      await BleService.instance
+          .setEyeProfile(requestedProfile)
+          .timeout(const Duration(milliseconds: 900));
+      _recordDescribeLog('Eye profile ack received: $requestedLabel.');
+    } on TimeoutException {
+      final current = BleService.instance.currentEyeProfileLabel ?? 'unknown';
+      _recordDescribeLog(
+        'Eye profile ack timed out for $requestedLabel; '
+        'continuing Describe with current ready profile $current.',
+      );
+    } catch (error) {
+      final current = BleService.instance.currentEyeProfileLabel ?? 'unknown';
+      _recordDescribeLog(
+        'Eye profile request failed for $requestedLabel: '
+        '${error.runtimeType}; continuing with $current.',
+      );
+    }
+    if (_disposed || !_isProcessing || !_waitingForCaptureImage) return;
+    _startProcessingTimeout(cameraTransfer: true);
+    unawaited(
+      BleService.instance.triggerEyeCapture().catchError((Object error) {
+        _recordDescribeLog(
+          'Capture command future failed: ${error.runtimeType}.',
+        );
+      }),
+    );
+  }
+
+  ScenePromptContext _scenePromptContext() {
+    return ScenePromptContext.fromSettings(settingsProvider);
+  }
+
+  int _eyeProfileForDescribe(PromptProfile profile) {
+    return switch (profile) {
+      PromptProfile.safety => EyeProfileIndex.fast,
+      PromptProfile.balanced ||
+      PromptProfile.navigation ||
+      PromptProfile.reading => EyeProfileIndex.balanced,
+    };
+  }
+
+  String _eyeProfileLabel(int profileIndex) {
+    return switch (profileIndex) {
+      EyeProfileIndex.fast => 'FAST',
+      EyeProfileIndex.balanced => 'BALANCED',
+      EyeProfileIndex.quality => 'QUALITY',
+      EyeProfileIndex.max => 'MAX',
+      _ => 'UNKNOWN:$profileIndex',
+    };
   }
 
   void _handleEyeCaptureDiagnostic(EyeCaptureDiagnostic diagnostic) {
@@ -682,6 +818,8 @@ class HomeViewModel extends ChangeNotifier {
       imageBytes: imageBytes,
       visionMode: sceneService.mode.name,
       detailLevel: settingsProvider.detailLevel.name,
+      promptProfile: settingsProvider.promptProfile.name,
+      hazardSensitivity: settingsProvider.hazardSensitivity.name,
     );
     _currentTrace = trace;
     _recordDescribeLog('Describe attempt ${trace.attemptId} ${stage.name}.');
@@ -692,6 +830,7 @@ class HomeViewModel extends ChangeNotifier {
     DescribePipelineStage stage, {
     int? imageBytes,
     String? lastError,
+    String? requestedEyeProfile,
   }) async {
     var trace = _currentTrace;
     if (trace == null) {
@@ -704,6 +843,9 @@ class HomeViewModel extends ChangeNotifier {
       imageBytes: imageBytes,
       visionMode: sceneService.mode.name,
       detailLevel: settingsProvider.detailLevel.name,
+      promptProfile: settingsProvider.promptProfile.name,
+      hazardSensitivity: settingsProvider.hazardSensitivity.name,
+      requestedEyeProfile: requestedEyeProfile,
       lastError: lastError,
     );
     _currentTrace = next;

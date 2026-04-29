@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ican/models/settings_provider.dart';
 import 'package:ican/services/connectivity_service.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:ican/services/scene_description_service.dart';
+import 'package:ican/services/scene_prompt_builder.dart';
 import 'package:ican/services/vertex_ai_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,16 +24,99 @@ void main() {
       );
     });
 
-    test('uses CoreML/Vision template and never loads SmolVLM', () async {
+    test('uses Foundation Models when available', () async {
+      onDevice.foundationModelsAvailable = true;
+      onDevice.foundationModelsOutput = 'Foundation model description';
+
       final result = await service.describeOffline(_jpegBytes);
 
-      expect(result.backend, VisionBackend.visionOnly);
-      expect(result.text, contains('hallway setting'));
-      expect(result.text, contains('chair at 12 o\'clock'));
+      expect(result.backend, VisionBackend.foundationModels);
+      expect(result.text, 'Foundation model description.');
       expect(onDevice.loadVlmCalls, 0);
       expect(onDevice.analyzeSceneCalls, 1);
       expect(onDevice.analyzeWithVisionCalls, 0);
     });
+
+    test('offline generated prompt receives selected prompt context', () async {
+      onDevice.foundationModelsAvailable = true;
+      onDevice.foundationModelsOutput = 'Reading output';
+
+      await service.describeOffline(
+        _jpegBytes,
+        promptContext: const ScenePromptContext(
+          profile: PromptProfile.reading,
+          detailLevel: DetailLevel.detailed,
+          hazardSensitivity: HazardSensitivity.high,
+        ),
+      );
+
+      expect(
+        onDevice.foundationSystemPrompts.single,
+        contains('Reading profile'),
+      );
+      expect(onDevice.foundationSystemPrompts.single, contains('visible text'));
+      expect(
+        onDevice.foundationSystemPrompts.single,
+        contains('150 centimeters'),
+      );
+    });
+
+    test(
+      'loads and uses SmolVLM when Foundation Models are unavailable',
+      () async {
+        onDevice.modelStatus = ModelStatus.ready;
+        onDevice.loadVlmResult = true;
+        onDevice.vlmOutput = 'SmolVLM2 description';
+
+        final result = await service.describeOffline(_jpegBytes);
+
+        expect(result.backend, VisionBackend.vlm);
+        expect(result.text, 'SmolVLM2 description.');
+        expect(onDevice.loadVlmCalls, 1);
+        expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeWithVisionCalls, 0);
+      },
+    );
+
+    test(
+      'falls back to SmolVLM when Foundation Models produce no output',
+      () async {
+        onDevice.foundationModelsAvailable = true;
+        onDevice.foundationModelsOutput = '';
+        onDevice.modelStatus = ModelStatus.loaded;
+        onDevice.vlmOutput = 'SmolVLM2 description';
+
+        final result = await service.describeOffline(_jpegBytes);
+
+        expect(result.backend, VisionBackend.vlm);
+        expect(result.text, 'SmolVLM2 description.');
+        expect(onDevice.loadVlmCalls, 0);
+        expect(onDevice.analyzeSceneCalls, 1);
+      },
+    );
+
+    test(
+      'falls back to spatial template when generative backends fail',
+      () async {
+        onDevice.foundationModelsAvailable = true;
+        onDevice.foundationModelsError = StateError('FM failed');
+        onDevice.modelStatus = ModelStatus.ready;
+        onDevice.loadVlmResult = true;
+        onDevice.vlmError = const LocalVisionException(
+          'Local L20',
+          'SmolVLM2 failed.',
+        );
+
+        final result = await service.describeOffline(_jpegBytes);
+
+        expect(result.backend, VisionBackend.visionOnly);
+        expect(result.text, contains('hallway setting'));
+        expect(result.text, contains('chair at 12 o\'clock'));
+        expect(onDevice.loadVlmCalls, 1);
+        expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeWithVisionCalls, 0);
+      },
+    );
 
     test(
       'falls back to Apple Vision-only template when spatial pass fails',
@@ -132,6 +217,23 @@ void main() {
       expect(cloud.streamCalls, 1);
       expect(service.lastBackend, VisionBackend.cloud);
       expect(onDevice.analyzeSceneCalls, 0);
+    });
+
+    test('cloud prompt receives selected prompt context', () async {
+      await service.setMode(VisionMode.cloudOnly);
+
+      await service.describeCloud(
+        _jpegBytes,
+        promptContext: const ScenePromptContext(
+          profile: PromptProfile.safety,
+          detailLevel: DetailLevel.brief,
+          hazardSensitivity: HazardSensitivity.high,
+        ),
+      );
+
+      expect(cloud.systemPrompts.single, contains('Safety profile'));
+      expect(cloud.systemPrompts.single, contains('150 centimeters'));
+      expect(cloud.userPrompts.single, contains('safety-first'));
     });
 
     test(
@@ -335,10 +437,16 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool nativeReady = false;
   bool appleVisionReady = false;
   bool vlmProducesOutput = true;
+  String foundationModelsOutput = 'Foundation model description.';
+  String vlmOutput = 'SmolVLM2 description.';
+  Object? foundationModelsError;
+  Object? vlmError;
   Object? analyzeSceneError;
   int loadVlmCalls = 0;
   int analyzeWithVisionCalls = 0;
   int analyzeSceneCalls = 0;
+  final List<String> foundationSystemPrompts = [];
+  final List<String> vlmSystemPrompts = [];
 
   @override
   Future<bool> isFoundationModelsAvailable() async => foundationModelsAvailable;
@@ -400,7 +508,10 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
     String context, {
     required String systemPrompt,
   }) async* {
-    yield 'Foundation model description.';
+    foundationSystemPrompts.add(systemPrompt);
+    final failure = foundationModelsError;
+    if (failure != null) throw failure;
+    if (foundationModelsOutput.isNotEmpty) yield foundationModelsOutput;
   }
 
   @override
@@ -409,14 +520,18 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
     required String systemPrompt,
     String? visionContext,
   }) async* {
+    vlmSystemPrompts.add(systemPrompt);
+    final failure = vlmError;
+    if (failure != null) throw failure;
     if (!vlmProducesOutput) return;
-    yield 'SmolVLM2 description.';
+    if (vlmOutput.isNotEmpty) yield vlmOutput;
   }
 }
 
 class _FakeVertexAiService extends VertexAiService {
   Object? error;
   int streamCalls = 0;
+  final List<String> systemPrompts = [];
   final List<String> userPrompts = [];
   List<List<String>> responseChunks = const [
     ['Cloud description.'],
@@ -435,6 +550,7 @@ class _FakeVertexAiService extends VertexAiService {
     int maxOutputTokens = 500,
   }) async* {
     streamCalls++;
+    systemPrompts.add(systemPrompt);
     userPrompts.add(userPrompt);
     final failure = error;
     if (failure != null) throw failure;

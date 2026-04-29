@@ -177,12 +177,22 @@ class SceneDescriptionService extends ChangeNotifier {
     String userPrompt =
         'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
     int maxOutputTokens = 500,
+    ScenePromptContext promptContext = const ScenePromptContext(),
     void Function(String status, VisionBackend backend)? onStatusUpdate,
   }) async* {
     final result = switch (_mode) {
-      VisionMode.cloudOnly => await describeCloud(imageBytes),
-      VisionMode.offlineOnly => await describeOffline(imageBytes),
-      VisionMode.auto => await _describeAutoForCompatibility(imageBytes),
+      VisionMode.cloudOnly => await describeCloud(
+        imageBytes,
+        promptContext: promptContext,
+      ),
+      VisionMode.offlineOnly => await describeOffline(
+        imageBytes,
+        promptContext: promptContext,
+      ),
+      VisionMode.auto => await _describeAutoForCompatibility(
+        imageBytes,
+        promptContext: promptContext,
+      ),
     };
     onStatusUpdate?.call(
       'Analyzed with ${result.backend.name}.',
@@ -191,13 +201,16 @@ class SceneDescriptionService extends ChangeNotifier {
     yield result.text;
   }
 
-  Future<SceneDescriptionResult> describeCloud(Uint8List imageBytes) async {
+  Future<SceneDescriptionResult> describeCloud(
+    Uint8List imageBytes, {
+    ScenePromptContext promptContext = const ScenePromptContext(),
+  }) async {
     _lastCloudFailure = null;
     _lastBackend = VisionBackend.cloud;
     await cloudService.setModel(AiModel.flash);
     debugPrint('[SceneDescription] Using explicit backend: cloud');
     try {
-      final prompt = const ScenePromptBuilder().build();
+      final prompt = const ScenePromptBuilder().build(promptContext);
       final chunks = await _describeWithCloud(
         imageBytes,
         systemPrompt: prompt.systemPrompt,
@@ -220,17 +233,16 @@ class SceneDescriptionService extends ChangeNotifier {
     }
   }
 
-  Future<SceneDescriptionResult> describeOffline(Uint8List imageBytes) async {
-    _lastBackend = VisionBackend.visionOnly;
+  Future<SceneDescriptionResult> describeOffline(
+    Uint8List imageBytes, {
+    ScenePromptContext promptContext = const ScenePromptContext(),
+  }) async {
     _lastCompletionMetadata = SceneCompletionMetadata.complete;
-    debugPrint('[SceneDescription] Using explicit backend: offline template');
+    debugPrint('[SceneDescription] Using explicit backend: layered offline');
+
+    ScenePerceptionResult perception;
     try {
-      final analysis = await onDeviceService.analyzeScene(imageBytes);
-      return SceneDescriptionResult(
-        text: analysis.toTemplateDescription(),
-        backend: VisionBackend.visionOnly,
-        completionMetadata: SceneCompletionMetadata.complete,
-      );
+      perception = await onDeviceService.analyzeScene(imageBytes);
     } catch (firstError) {
       debugPrint(
         '[SceneDescription] Full offline perception failed; trying Apple Vision only: $firstError',
@@ -246,15 +258,55 @@ class SceneDescriptionService extends ChangeNotifier {
         throw SceneDescriptionException.localVision(e);
       }
     }
+
+    final prompt = const ScenePromptBuilder().build(promptContext);
+
+    if (await _isFoundationModelsUsable()) {
+      final text = await _tryLocalGeneratedText(
+        label: 'Foundation Models',
+        backend: VisionBackend.foundationModels,
+        collect: () => _collectFoundationModelsText(
+          perception,
+          systemPrompt: prompt.systemPrompt,
+        ),
+      );
+      if (text != null) {
+        return _offlineResult(text, VisionBackend.foundationModels);
+      }
+    }
+
+    if (await _loadSmolVlmIfUsable()) {
+      final text = await _tryLocalGeneratedText(
+        label: 'SmolVLM2',
+        backend: VisionBackend.vlm,
+        collect: () => _collectVlmText(
+          imageBytes,
+          perception,
+          systemPrompt: prompt.systemPrompt,
+        ),
+      );
+      if (text != null) {
+        return _offlineResult(text, VisionBackend.vlm);
+      }
+    }
+
+    debugPrint(
+      '[SceneDescription] Offline generative backends unavailable; using template',
+    );
+    return _offlineResult(
+      perception.toTemplateDescription(),
+      VisionBackend.visionOnly,
+    );
   }
 
   Future<SceneDescriptionResult> _describeAutoForCompatibility(
-    Uint8List imageBytes,
-  ) async {
+    Uint8List imageBytes, {
+    ScenePromptContext promptContext = const ScenePromptContext(),
+  }) async {
     final online = await _connectivity.hasInternet();
     if (online) {
       try {
-        return await describeCloud(imageBytes);
+        return await describeCloud(imageBytes, promptContext: promptContext);
       } catch (e) {
         _lastCloudFailure = _asCloudFailure(e);
         debugPrint('[SceneDescription] Cloud failed: $_lastCloudFailure');
@@ -270,7 +322,7 @@ class SceneDescriptionService extends ChangeNotifier {
         cloudFailure: _lastCloudFailure,
       );
     }
-    return describeOffline(imageBytes);
+    return describeOffline(imageBytes, promptContext: promptContext);
   }
 
   static const Duration _localHealthCheckTimeout = Duration(seconds: 5);
@@ -299,6 +351,156 @@ class SceneDescriptionService extends ChangeNotifier {
         return false;
       }),
     ]);
+  }
+
+  static const Duration _localGenerationTimeout = Duration(seconds: 45);
+  static const Duration _localModelLoadTimeout = Duration(seconds: 20);
+
+  Future<bool> _isFoundationModelsUsable() async {
+    try {
+      return await onDeviceService.isFoundationModelsAvailable();
+    } catch (e) {
+      debugPrint('[SceneDescription] Foundation Models status failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _loadSmolVlmIfUsable() async {
+    try {
+      final status = await onDeviceService.getModelStatus();
+      switch (status) {
+        case ModelStatus.loaded:
+          return true;
+        case ModelStatus.ready:
+          return await onDeviceService.loadVlmModel().timeout(
+            _localModelLoadTimeout,
+            onTimeout: () => false,
+          );
+        case ModelStatus.notAvailable:
+        case ModelStatus.notDownloaded:
+        case ModelStatus.downloading:
+          debugPrint('[SceneDescription] SmolVLM2 unavailable: ${status.name}');
+          return false;
+      }
+    } catch (e) {
+      debugPrint('[SceneDescription] SmolVLM2 status/load failed: $e');
+      return false;
+    }
+  }
+
+  Future<String?> _tryLocalGeneratedText({
+    required String label,
+    required VisionBackend backend,
+    required Future<String> Function() collect,
+  }) async {
+    try {
+      final text = await collect();
+      final cleaned = _cleanLocalDescriptionText(text);
+      if (cleaned.isEmpty) {
+        debugPrint('[SceneDescription] $label produced no usable output');
+        return null;
+      }
+      _lastBackend = backend;
+      _lastCompletionMetadata = SceneCompletionMetadata.complete;
+      return cleaned;
+    } catch (e) {
+      debugPrint('[SceneDescription] $label failed; falling back: $e');
+      return null;
+    }
+  }
+
+  Future<String> _collectFoundationModelsText(
+    ScenePerceptionResult perception, {
+    required String systemPrompt,
+  }) async {
+    final context = perception.toPromptContext();
+    return _collectLocalTokenStream(
+      onDeviceService.synthesizeWithFoundationModels(
+        context,
+        systemPrompt: systemPrompt,
+      ),
+      label: 'Foundation Models',
+    );
+  }
+
+  Future<String> _collectVlmText(
+    Uint8List imageBytes,
+    ScenePerceptionResult perception, {
+    required String systemPrompt,
+  }) async {
+    final context = perception.toPromptContext();
+    final enhancedPrompt = context.isNotEmpty
+        ? '$systemPrompt\n\nUse the sensor context below for hazards, clock positions, and visible text.\n\n$context'
+        : systemPrompt;
+    return _collectLocalTokenStream(
+      onDeviceService.describeWithVlm(
+        imageBytes,
+        systemPrompt: enhancedPrompt,
+        visionContext: context.isEmpty ? null : context,
+      ),
+      label: 'SmolVLM2',
+    );
+  }
+
+  Future<String> _collectLocalTokenStream(
+    Stream<String> stream, {
+    required String label,
+  }) {
+    final completer = Completer<String>();
+    final chunks = <String>[];
+    StreamSubscription<String>? subscription;
+    late final Timer timeout;
+
+    void completeError(Object error, [StackTrace? stackTrace]) {
+      if (completer.isCompleted) return;
+      completer.completeError(error, stackTrace);
+    }
+
+    timeout = Timer(_localGenerationTimeout, () {
+      unawaited(subscription?.cancel());
+      completeError(
+        TimeoutException(
+          '$label did not produce a complete local description in time.',
+          _localGenerationTimeout,
+        ),
+      );
+    });
+
+    subscription = stream.listen(
+      chunks.add,
+      onError: completeError,
+      onDone: () {
+        if (!completer.isCompleted) {
+          completer.complete(chunks.join());
+        }
+      },
+      cancelOnError: true,
+    );
+
+    return completer.future.whenComplete(() {
+      timeout.cancel();
+      unawaited(subscription?.cancel());
+    });
+  }
+
+  SceneDescriptionResult _offlineResult(String text, VisionBackend backend) {
+    _lastBackend = backend;
+    _lastCompletionMetadata = SceneCompletionMetadata.complete;
+    return SceneDescriptionResult(
+      text: _cleanLocalDescriptionText(text),
+      backend: backend,
+      completionMetadata: SceneCompletionMetadata.complete,
+    );
+  }
+
+  static String _cleanLocalDescriptionText(String text) {
+    final stripped = _stripCloudMetaText(text);
+    final normalized = stripped
+        .replaceAll(RegExp(r'^[\s\-\*]+', multiLine: true), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (normalized.isEmpty) return '';
+    return _ensureSentencePunctuation(normalized);
   }
 
   // Single-backend entry points for diagnostics.
@@ -728,6 +930,7 @@ class SceneDescriptionService extends ChangeNotifier {
       await for (final token in onDeviceService.describeWithVlm(
         imageBytes,
         systemPrompt: enhancedPrompt,
+        visionContext: context.isEmpty ? null : context,
       )) {
         gotTokens = true;
         yield token;
