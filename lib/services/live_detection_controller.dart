@@ -26,10 +26,17 @@ class LiveDetectionController extends ChangeNotifier {
 
   StreamSubscription<Uint8List>? _imageSub;
   StreamSubscription<BleConnectionEvent>? _connectionSub;
+  Timer? _cooldownTimer;
   var _state = LiveDetectionState.idle;
   var _busy = false;
+  var _skipUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  var _consecutiveFailures = 0;
   String _lastMessage = '';
   String? _lastError;
+
+  static const int _maxConsecutiveFailures = 3;
+  static const Duration _analysisTimeout = Duration(seconds: 5);
+  static const Duration _failureCooldown = Duration(seconds: 10);
 
   LiveDetectionState get state => _state;
   bool get active =>
@@ -49,6 +56,8 @@ class LiveDetectionController extends ChangeNotifier {
     _setState(LiveDetectionState.starting);
     _lastError = null;
     _busy = false;
+    _consecutiveFailures = 0;
+    _skipUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
     _imageSub = _ble.imageStream.listen(
       _handleFrame,
@@ -75,6 +84,8 @@ class LiveDetectionController extends ChangeNotifier {
     if (_state == LiveDetectionState.idle) return;
     _setState(LiveDetectionState.stopping);
     _busy = false;
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
     await _imageSub?.cancel();
     await _connectionSub?.cancel();
     _imageSub = null;
@@ -92,11 +103,16 @@ class LiveDetectionController extends ChangeNotifier {
 
   Future<void> _handleFrame(Uint8List jpeg) async {
     if (!active || _busy) return;
-    if (!_hasJpegEnvelope(jpeg)) return;
+    if (DateTime.now().isBefore(_skipUntil)) return;
+    if (!isLikelyValidJpeg(jpeg)) return;
     _busy = true;
     try {
-      final result = await _vision.analyzeScene(jpeg);
+      final result = await _vision
+          .analyzeLiveFrame(jpeg)
+          .timeout(_analysisTimeout);
       if (!active) return;
+      _lastError = null;
+      _consecutiveFailures = 0;
       final message = _messageFor(result);
       if (message.isEmpty || message == _lastMessage) return;
       _lastMessage = message;
@@ -105,21 +121,26 @@ class LiveDetectionController extends ChangeNotifier {
     } catch (e) {
       debugPrint('[LiveDetectionController] frame failed: $e');
       _lastError = 'Live frame skipped: ${e.runtimeType}.';
+      _consecutiveFailures += 1;
+      if (_consecutiveFailures >= _maxConsecutiveFailures) {
+        _skipUntil = DateTime.now().add(_failureCooldown);
+        _lastError = 'Live vision cooling down after repeated local failures.';
+        _cooldownTimer?.cancel();
+        _cooldownTimer = Timer(_failureCooldown, () {
+          _consecutiveFailures = 0;
+          if (active) {
+            _lastError = null;
+            notifyListeners();
+          }
+        });
+      }
       notifyListeners();
     } finally {
       _busy = false;
     }
   }
 
-  String _messageFor(ScenePerceptionResult result) {
-    final closeObjects = result.detectedObjects
-        .where((o) => (o.relativeDepth ?? 1.0) < 0.50 && o.confidence >= 0.45)
-        .take(2)
-        .map((o) => o.spatialLabel)
-        .toList();
-    if (closeObjects.isNotEmpty) {
-      return 'Caution: ${closeObjects.join(', ')}.';
-    }
+  String _messageFor(VisionAnalysis result) {
     if (result.personCount > 0) {
       return result.personCount == 1
           ? '1 person detected.'
@@ -129,14 +150,6 @@ class LiveDetectionController extends ChangeNotifier {
       return 'Text reads ${result.ocrTexts.take(2).join(', ')}.';
     }
     return '';
-  }
-
-  static bool _hasJpegEnvelope(Uint8List bytes) {
-    return bytes.length >= 4 &&
-        bytes[0] == 0xff &&
-        bytes[1] == 0xd8 &&
-        bytes[bytes.length - 2] == 0xff &&
-        bytes[bytes.length - 1] == 0xd9;
   }
 
   void _setError(String message) {
@@ -160,6 +173,7 @@ class LiveDetectionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     unawaited(stop(speak: false));
     super.dispose();
   }

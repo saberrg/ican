@@ -287,11 +287,15 @@ class OfflineVisionStatus {
   bool get hasSpatialPerception =>
       objectDetectionAvailable && depthEstimationAvailable;
 
+  bool get hasLivePerception =>
+      objectDetectionAvailable || depthEstimationAvailable;
+
   String get bestLocalBackendLabel {
-    if (foundationModelsAvailable) return 'Foundation Models';
     if (modelStatus == ModelStatus.loaded) return 'SmolVLM2';
-    if (hasSpatialPerception) return 'Core ML spatial perception';
-    return 'Local basic vision';
+    if (foundationModelsAvailable) return 'Foundation Models';
+    if (modelStatus == ModelStatus.ready) return 'SmolVLM2 ready';
+    if (hasLivePerception) return 'Local live perception';
+    return 'Apple Vision basic';
   }
 
   List<String> get missingRequirements {
@@ -661,6 +665,54 @@ class OnDeviceVisionService {
         'Local L04',
         'Apple Vision returned data that Dart could not parse.',
         detail: e.toString(),
+      );
+    }
+  }
+
+  /// Run the stable live lane: Apple Vision OCR, scene classification, and
+  /// person detection only. This intentionally avoids generative VLM and heavy
+  /// optional Core ML models so live mode can skip bad frames without taking
+  /// down the app.
+  Future<VisionAnalysis> analyzeLiveFrame(Uint8List jpegBytes) async {
+    if (!isLikelyValidJpeg(jpegBytes)) {
+      _recordVisionLog(
+        'analyzeLiveFrame rejected malformed JPEG bytes=${jpegBytes.length}',
+      );
+      throw _malformedJpegException(jpegBytes.length);
+    }
+    try {
+      final result = await _method
+          .invokeMethod<Map<dynamic, dynamic>>('analyzeLiveFrame', {
+            'imageBytes': jpegBytes,
+          })
+          .timeout(const Duration(seconds: 5));
+      if (result == null || result.containsKey('error')) {
+        throw LocalVisionException(
+          'Local L02',
+          'Apple Vision could not analyze this live frame.',
+          detail: result?['error']?.toString(),
+        );
+      }
+      return VisionAnalysis.fromMap(result);
+    } on TimeoutException {
+      throw const LocalVisionException(
+        'Local L05',
+        'Local live vision timed out.',
+      );
+    } on LocalVisionException {
+      rethrow;
+    } on MissingPluginException catch (e) {
+      debugPrint('[OnDeviceVision] Missing plugin: $e');
+      throw const LocalVisionException(
+        'Local L01',
+        'native vision channel is not registered.',
+      );
+    } on PlatformException catch (e) {
+      debugPrint('[OnDeviceVision] Live platform error: ${e.message}');
+      throw LocalVisionException(
+        'Local L03',
+        'Apple Vision failed on this live frame.',
+        detail: _platformDetail(e),
       );
     }
   }

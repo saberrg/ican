@@ -63,6 +63,13 @@ final class OnDeviceVisionChannel: NSObject {
                 DispatchQueue.main.async { result(analysis) }
             }
 
+        case "analyzeLiveFrame":
+            guard let imageBytes = imageBytes(from: call, result: result) else { return }
+            Task {
+                let analysis = await VisionService.analyze(jpegData: imageBytes)
+                DispatchQueue.main.async { result(analysis) }
+            }
+
         // ── Layer 1: Full perception pipeline (Vision + Depth + YOLO) ────────
         case "analyzeScene":
             guard let imageBytes = imageBytes(from: call, result: result) else { return }

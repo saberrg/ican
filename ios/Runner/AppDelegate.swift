@@ -3,7 +3,7 @@ import os.log
 import UIKit
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let appLog = OSLog(
     subsystem: Bundle.main.bundleIdentifier ?? "com.icannavigation.app",
     category: "AppLog"
@@ -13,10 +13,15 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
-    registerAppLogChannel()
-
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let messenger = engineBridge.applicationRegistrar.messenger()
+    registerAppLogChannel(with: messenger)
+    OnDeviceVisionChannel.register(with: messenger)
+    AudioPlaybackChannel.register(with: messenger)
   }
 
   override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
@@ -25,15 +30,10 @@ import UIKit
     LlamaService.shared.unloadModel()
   }
 
-  private func registerAppLogChannel() {
-    guard let controller = window?.rootViewController as? FlutterViewController else {
-      os_log("AppLog channel unavailable: root FlutterViewController missing", log: appLog, type: .error)
-      return
-    }
-
+  private func registerAppLogChannel(with messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
       name: "com.ican/app_log",
-      binaryMessenger: controller.binaryMessenger
+      binaryMessenger: messenger
     )
     channel.setMethodCallHandler { [weak self] call, result in
       guard call.method == "log" else {

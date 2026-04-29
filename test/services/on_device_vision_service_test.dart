@@ -56,7 +56,7 @@ void main() {
       expect(status.modelStatus, ModelStatus.notAvailable);
       expect(status.objectDetectionAvailable, isFalse);
       expect(status.depthEstimationAvailable, isFalse);
-      expect(status.bestLocalBackendLabel, 'Local basic vision');
+      expect(status.bestLocalBackendLabel, 'Apple Vision basic');
       expect(
         status.missingRequirements,
         containsAll([
@@ -97,6 +97,12 @@ void main() {
     );
     await expectLater(
       service.analyzeScene(truncated),
+      throwsA(
+        isA<LocalVisionException>().having((e) => e.code, 'code', 'Local L00'),
+      ),
+    );
+    await expectLater(
+      service.analyzeLiveFrame(truncated),
       throwsA(
         isA<LocalVisionException>().having((e) => e.code, 'code', 'Local L00'),
       ),
@@ -199,7 +205,7 @@ void main() {
 
       final status = await OnDeviceVisionService().getOfflineVisionStatus();
 
-      expect(status.bestLocalBackendLabel, 'Core ML spatial perception');
+      expect(status.bestLocalBackendLabel, 'Local live perception');
       expect(status.hasSpatialPerception, isTrue);
       expect(
         status.missingRequirements,
@@ -208,28 +214,49 @@ void main() {
     },
   );
 
-  test(
-    'reports Foundation Models as the best local backend when available',
-    () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            return switch (call.method) {
-              'isFoundationModelsAvailable' => true,
-              'getModelStatus' => 'loaded',
-              'isObjectDetectionAvailable' => true,
-              'isDepthEstimationAvailable' => true,
-              'getNativeModelDiagnostics' => _diagnostics,
-              _ => throw PlatformException(code: 'unexpected'),
+  test('reports loaded SmolVLM as the best local backend', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          return switch (call.method) {
+            'isFoundationModelsAvailable' => true,
+            'getModelStatus' => 'loaded',
+            'isObjectDetectionAvailable' => true,
+            'isDepthEstimationAvailable' => true,
+            'getNativeModelDiagnostics' => _diagnostics,
+            _ => throw PlatformException(code: 'unexpected'),
+          };
+        });
+
+    final status = await OnDeviceVisionService().getOfflineVisionStatus();
+
+    expect(status.bestLocalBackendLabel, 'SmolVLM2');
+    expect(status.modelStatus, ModelStatus.loaded);
+    expect(status.missingRequirements, isEmpty);
+  });
+
+  test('live frame analysis uses the stable native live lane', () async {
+    final methods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          methods.add(call.method);
+          if (call.method == 'analyzeLiveFrame') {
+            return {
+              'ocr_texts': ['EXIT'],
+              'scene_classification': 'hallway',
+              'scene_confidence': 0.84,
+              'person_count': 1,
+              'person_rects': [],
             };
-          });
+          }
+          throw PlatformException(code: 'unexpected');
+        });
 
-      final status = await OnDeviceVisionService().getOfflineVisionStatus();
+    final result = await OnDeviceVisionService().analyzeLiveFrame(_fakeJpeg());
 
-      expect(status.bestLocalBackendLabel, 'Foundation Models');
-      expect(status.modelStatus, ModelStatus.loaded);
-      expect(status.missingRequirements, isEmpty);
-    },
-  );
+    expect(methods, ['analyzeLiveFrame']);
+    expect(result.ocrTexts, ['EXIT']);
+    expect(result.personCount, 1);
+  });
 
   test('returns native model diagnostics', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

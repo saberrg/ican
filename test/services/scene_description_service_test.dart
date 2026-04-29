@@ -33,8 +33,8 @@ void main() {
       expect(result.backend, VisionBackend.foundationModels);
       expect(result.text, 'Foundation model description.');
       expect(onDevice.loadVlmCalls, 0);
-      expect(onDevice.analyzeSceneCalls, 1);
-      expect(onDevice.analyzeWithVisionCalls, 0);
+      expect(onDevice.analyzeSceneCalls, 0);
+      expect(onDevice.analyzeWithVisionCalls, 1);
     });
 
     test('offline generated prompt receives selected prompt context', () async {
@@ -73,8 +73,8 @@ void main() {
         expect(result.backend, VisionBackend.vlm);
         expect(result.text, 'SmolVLM2 description.');
         expect(onDevice.loadVlmCalls, 1);
-        expect(onDevice.analyzeSceneCalls, 1);
-        expect(onDevice.analyzeWithVisionCalls, 0);
+        expect(onDevice.analyzeSceneCalls, 0);
+        expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
 
@@ -91,7 +91,8 @@ void main() {
         expect(result.backend, VisionBackend.vlm);
         expect(result.text, 'SmolVLM2 description.');
         expect(onDevice.loadVlmCalls, 0);
-        expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeSceneCalls, 0);
+        expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
 
@@ -111,27 +112,34 @@ void main() {
 
         expect(result.backend, VisionBackend.visionOnly);
         expect(result.text, contains('hallway setting'));
-        expect(result.text, contains('chair at 12 o\'clock'));
         expect(onDevice.loadVlmCalls, 1);
-        expect(onDevice.analyzeSceneCalls, 1);
-        expect(onDevice.analyzeWithVisionCalls, 0);
+        expect(onDevice.analyzeSceneCalls, 0);
+        expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
 
     test(
-      'falls back to Apple Vision-only template when spatial pass fails',
+      'reports local failure when Apple Vision cannot analyze the image',
       () async {
-        onDevice.analyzeSceneError = const LocalVisionException(
+        onDevice.analyzeWithVisionError = const LocalVisionException(
           'Local L03',
-          'Core ML failed.',
+          'Apple Vision failed.',
         );
 
-        final result = await service.describeOffline(_jpegBytes);
+        await expectLater(
+          service.describeOffline(_jpegBytes),
+          throwsA(
+            isA<SceneDescriptionException>()
+                .having(
+                  (e) => e.stage,
+                  'stage',
+                  SceneDescriptionFailureStage.localVision,
+                )
+                .having((e) => e.cause, 'cause', isA<LocalVisionException>()),
+          ),
+        );
 
-        expect(result.backend, VisionBackend.visionOnly);
-        expect(result.text, contains('hallway setting'));
         expect(onDevice.loadVlmCalls, 0);
-        expect(onDevice.analyzeSceneCalls, 1);
         expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
@@ -168,8 +176,8 @@ void main() {
       expect(service.lastCloudFailure, isA<CloudVisionException>());
       expect(service.lastBackend, VisionBackend.visionOnly);
       expect(chunks.join(), contains('hallway setting'));
-      expect(onDevice.analyzeSceneCalls, 1);
-      expect(onDevice.analyzeWithVisionCalls, 0);
+      expect(onDevice.analyzeSceneCalls, 0);
+      expect(onDevice.analyzeWithVisionCalls, 1);
     });
 
     test(
@@ -442,6 +450,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   Object? foundationModelsError;
   Object? vlmError;
   Object? analyzeSceneError;
+  Object? analyzeWithVisionError;
   int loadVlmCalls = 0;
   int analyzeWithVisionCalls = 0;
   int analyzeSceneCalls = 0;
@@ -494,6 +503,8 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   @override
   Future<VisionAnalysis> analyzeWithVision(Uint8List jpegBytes) async {
     analyzeWithVisionCalls++;
+    final failure = analyzeWithVisionError;
+    if (failure != null) throw failure;
     return const VisionAnalysis(
       ocrTexts: ['EXIT'],
       sceneClassification: 'hallway',

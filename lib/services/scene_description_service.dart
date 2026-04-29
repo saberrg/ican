@@ -15,7 +15,10 @@ enum VisionMode {
     'Auto: cloud reliable',
     'Uses Gemini cloud first; local only when cloud is unavailable',
   ),
-  offlineOnly('Local basic vision', 'Uses on-device Apple Vision cues'),
+  offlineOnly(
+    'Offline: device only',
+    'Uses on-device Apple Vision and a local model only when healthy',
+  ),
   cloudOnly('Cloud', 'Always uses Gemini cloud API');
 
   const VisionMode(this.label, this.description);
@@ -26,9 +29,9 @@ enum VisionMode {
 /// Which backend was used for the most recent description.
 enum VisionBackend {
   cloud,
-  foundationModels, // Apple Foundation Models (iOS 26+)
-  vlm, // SmolVLM2-500M via llama.cpp mtmd
-  visionOnly, // Layer 1 template only
+  foundationModels, // Apple Foundation Models snapshot synthesis.
+  vlm, // Local snapshot VLM.
+  visionOnly, // Apple Vision template only.
 }
 
 class SceneDescriptionResult {
@@ -238,25 +241,13 @@ class SceneDescriptionService extends ChangeNotifier {
     ScenePromptContext promptContext = const ScenePromptContext(),
   }) async {
     _lastCompletionMetadata = SceneCompletionMetadata.complete;
-    debugPrint('[SceneDescription] Using explicit backend: layered offline');
+    debugPrint('[SceneDescription] Using explicit backend: stable offline');
 
-    ScenePerceptionResult perception;
+    VisionAnalysis perception;
     try {
-      perception = await onDeviceService.analyzeScene(imageBytes);
-    } catch (firstError) {
-      debugPrint(
-        '[SceneDescription] Full offline perception failed; trying Apple Vision only: $firstError',
-      );
-      try {
-        final vision = await onDeviceService.analyzeWithVision(imageBytes);
-        return SceneDescriptionResult(
-          text: vision.toTemplateDescription(),
-          backend: VisionBackend.visionOnly,
-          completionMetadata: SceneCompletionMetadata.complete,
-        );
-      } catch (e) {
-        throw SceneDescriptionException.localVision(e);
-      }
+      perception = await onDeviceService.analyzeWithVision(imageBytes);
+    } catch (e) {
+      throw SceneDescriptionException.localVision(e);
     }
 
     final prompt = const ScenePromptBuilder().build(promptContext);
@@ -410,7 +401,7 @@ class SceneDescriptionService extends ChangeNotifier {
   }
 
   Future<String> _collectFoundationModelsText(
-    ScenePerceptionResult perception, {
+    VisionAnalysis perception, {
     required String systemPrompt,
   }) async {
     final context = perception.toPromptContext();
@@ -425,7 +416,7 @@ class SceneDescriptionService extends ChangeNotifier {
 
   Future<String> _collectVlmText(
     Uint8List imageBytes,
-    ScenePerceptionResult perception, {
+    VisionAnalysis perception, {
     required String systemPrompt,
   }) async {
     final context = perception.toPromptContext();
@@ -867,12 +858,12 @@ class SceneDescriptionService extends ChangeNotifier {
     unawaited(AppLogService.instance.record(message, source: 'describe'));
   }
 
-  /// Foundation Models path: Layer 1 perception -> Apple LLM synthesis.
+  /// Foundation Models path: Apple Vision facts -> Apple LLM synthesis.
   Stream<String> _describeWithFoundationModels(
     Uint8List imageBytes, {
     required String systemPrompt,
   }) async* {
-    final perception = await onDeviceService.analyzeScene(imageBytes);
+    final perception = await onDeviceService.analyzeWithVision(imageBytes);
     final context = perception.toPromptContext();
 
     debugPrint('[SceneDescription] FM context: $context');
@@ -896,7 +887,7 @@ class SceneDescriptionService extends ChangeNotifier {
     }
   }
 
-  /// VLM path: Layer 1 perception context fed into SmolVLM2.
+  /// VLM path: Apple Vision context fed into the local snapshot VLM.
   ///
   /// When [allowTemplateFallback] is true (the default auto-mode path) the
   /// stream *never* throws once perception has succeeded: VLM crashes or
@@ -908,9 +899,9 @@ class SceneDescriptionService extends ChangeNotifier {
     required String systemPrompt,
     bool allowTemplateFallback = true,
   }) async* {
-    ScenePerceptionResult? perception;
+    VisionAnalysis? perception;
     try {
-      perception = await onDeviceService.analyzeScene(imageBytes);
+      perception = await onDeviceService.analyzeWithVision(imageBytes);
     } catch (e) {
       debugPrint('[SceneDescription] Perception failed before VLM: $e');
       if (!allowTemplateFallback) rethrow;
