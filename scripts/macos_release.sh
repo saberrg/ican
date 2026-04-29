@@ -6,6 +6,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+if [[ -e "Gemfile.lock" ]] && ! git ls-files --error-unmatch "Gemfile.lock" >/dev/null 2>&1; then
+  rm -f "Gemfile.lock"
+fi
+
 BUILD_NUMBER="${1:-${BUILD_NUMBER:-}}"
 if [[ -z "$BUILD_NUMBER" ]]; then
   printf 'ERROR: build number is required. Usage: ./scripts/macos_release.sh <build_number>\n' >&2

@@ -20,6 +20,13 @@ fail() {
   exit 1
 }
 
+remove_stale_untracked_file() {
+  local path="$1"
+  if [[ -e "$path" ]] && ! git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+    rm -f "$path"
+  fi
+}
+
 ensure_command() {
   local cmd="$1"
   command -v "$cmd" >/dev/null 2>&1 || fail "$cmd is required on the Mac runner"
@@ -28,6 +35,8 @@ ensure_command() {
 if [[ "$(uname -s)" != "Darwin" ]]; then
   fail "This script must run on macOS"
 fi
+
+remove_stale_untracked_file Gemfile.lock
 
 log "Xcode"
 ensure_command xcodebuild
