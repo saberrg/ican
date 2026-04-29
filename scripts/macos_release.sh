@@ -12,6 +12,15 @@ if [[ -z "$BUILD_NUMBER" ]]; then
   exit 1
 fi
 
+if [[ "$BUILD_NUMBER" =~ ^ios-v.*-([0-9]+)$ ]]; then
+  BUILD_NUMBER="${BASH_REMATCH[1]}"
+fi
+
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+  printf 'ERROR: build number must be numeric or use tag format ios-v<version>-<build_number>\n' >&2
+  exit 1
+fi
+
 required_env=(
   ICAN_API_KEY
   ASC_KEY_ID

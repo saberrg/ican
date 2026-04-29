@@ -11,6 +11,9 @@ on:
         description: "Optional TestFlight release notes"
         required: false
         type: string
+  push:
+    tags:
+      - "ios-v*"
 
 permissions:
   contents: read
@@ -26,8 +29,8 @@ jobs:
     timeout-minutes: 90
     environment: testflight
     env:
-      BUILD_NUMBER: ${{ inputs.build_number }}
-      RELEASE_NOTES: ${{ inputs.release_notes }}
+      BUILD_NUMBER: ${{ inputs.build_number || github.ref_name }}
+      RELEASE_NOTES: ${{ inputs.release_notes || github.ref_name }}
       IOS_BUNDLE_IDENTIFIER: com.icannavigation.app
       ICAN_API_KEY: ${{ secrets.ICAN_API_KEY }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

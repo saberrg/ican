@@ -26,7 +26,7 @@ Mac without committing secrets or Apple signing material.
 Primary release path:
 
 1. Codex edits locally, runs the iCan verification gates, commits, and pushes.
-2. GitHub Actions workflow `iOS TestFlight Release` is triggered manually.
+2. Codex pushes a release tag like `ios-v1.0.0-26`, or the workflow is triggered manually.
 3. The job runs on a self-hosted macOS runner labeled `macOS` and `ican-ios`.
 4. The Mac runs `scripts/macos_setup.sh --ci`.
 5. The Mac runs `scripts/macos_release.sh <build_number>`.
@@ -49,6 +49,10 @@ Add these to GitHub Actions secrets for the `testflight` environment or the repo
 
 Do not commit `.env`, `.p8`, `.p12`, `.cer`, provisioning profiles, private
 keys, passwords, raw Apple account output, or API key values.
+
+For fully hands-free TestFlight uploads, leave `Required reviewers` disabled on
+the `testflight` environment. If reviewers are enabled, GitHub will pause every
+release until a human approves the deployment.
 
 For local development, keep the Gemini key in the shell or an untracked `.env`:
 
@@ -86,7 +90,17 @@ Do not paste private key, certificate, or Apple account details into repo docs.
 
 ## Release Trigger
 
-Use GitHub Actions:
+Preferred hands-free trigger:
+
+```powershell
+.\scripts\release_testflight.ps1 -BuildNumber 26 -Watch
+```
+
+The helper creates and pushes tag `ios-v1.0.0-26`; the workflow extracts build
+number `26` from the tag suffix. `-Watch` uses GitHub CLI when authenticated.
+Without GitHub CLI auth, pushing the tag still triggers the release.
+
+Manual UI trigger:
 
 1. Open Actions.
 2. Select `iOS TestFlight Release`.
@@ -131,7 +145,7 @@ iCan Eye smoke in `docs/regression_matrix.md`.
 Use this prompt for release-capable Codex sessions:
 
 ```text
-Use the documented iCan release pipeline. Make the requested app change, preserve unrelated dirty work, run the required iCan gates, credential-scan tracked files, commit only relevant changes, push to origin, then trigger the manual iOS TestFlight Release workflow with the next build number. Do not print or commit secrets.
+Use the documented iCan release pipeline. Make the requested app change, preserve unrelated dirty work, run the required iCan gates, credential-scan tracked files, commit only relevant changes, push to origin, then run .\scripts\release_testflight.ps1 -BuildNumber <next_build_number> -Watch. Do not print or commit secrets.
 ```
 
 ## Known Limits
