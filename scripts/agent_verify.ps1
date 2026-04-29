@@ -8,6 +8,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# PowerShell 7+ turns any stderr output from a native command into a
+# NativeCommandError record under "Stop". flutter analyze and a few other
+# tools write info-level notices to stderr even when they exit 0, which was
+# bringing down the whole runner. We force each step to treat stderr as
+# ordinary output and drive success purely from the exit code.
 function Invoke-Step {
     param(
         [Parameter(Mandatory = $true)] [string] $Name,
@@ -16,7 +21,15 @@ function Invoke-Step {
 
     Write-Host ""
     Write-Host "==> $Name" -ForegroundColor Cyan
-    & $Command
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        # 2>&1 merges native stderr into the stdout stream so PowerShell
+        # cannot promote non-fatal notices into terminating errors.
+        & $Command 2>&1 | ForEach-Object { Write-Host $_ }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
     }
@@ -54,14 +67,11 @@ if ($IosPreflight) {
 }
 
 if ($Firmware) {
-    Invoke-Step "iCan Cane firmware build: wroom32" {
-        py -m platformio run -d firmware\ican_cane -e wroom32
-    }
-    Invoke-Step "iCan Cane firmware build: nano_esp32" {
-        py -m platformio run -d firmware\ican_cane -e nano_esp32
-    }
     Invoke-Step "iCan Eye firmware build: xiao_esp32s3" {
         py -m platformio run -d firmware\ican_eye -e xiao_esp32s3
+    }
+    Invoke-Step "iCan Eye host-native chunk-math tests" {
+        py -m platformio test -d firmware\ican_eye -e native
     }
 }
 

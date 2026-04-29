@@ -20,6 +20,30 @@ class LocalVisionException implements Exception {
   String toString() => userMessage;
 }
 
+/// Lightweight JPEG sanity check that never crosses the native boundary.
+///
+/// Rejects anything that isn't plausibly a full JPEG: too small to contain a
+/// scene, missing the 0xFFD8 SOI marker, or missing the 0xFFD9 EOI marker.
+/// We intentionally keep the check cheap — heavy decoding is the native
+/// layer's job — but everything that reaches a CoreML / llama.cpp entry
+/// point must pass this gate first, since malformed bytes have segfaulted
+/// the native layer in the past.
+bool isLikelyValidJpeg(Uint8List bytes) {
+  if (bytes.length < 1024) return false;
+  if (bytes[0] != 0xFF || bytes[1] != 0xD8) return false;
+  final last = bytes.length - 1;
+  if (bytes[last - 1] != 0xFF || bytes[last] != 0xD9) return false;
+  return true;
+}
+
+LocalVisionException _malformedJpegException(int byteCount) {
+  return LocalVisionException(
+    'Local L00',
+    'Image is corrupt or incomplete.',
+    detail: 'received $byteCount bytes without a valid JPEG envelope.',
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Data models
 // ─────────────────────────────────────────────────────────────────────────────
@@ -575,6 +599,12 @@ class OnDeviceVisionService {
   /// Run Apple Vision framework only (OCR + scene + people).
   /// Kept for backward-compat; prefer [analyzeScene] for new code.
   Future<VisionAnalysis> analyzeWithVision(Uint8List jpegBytes) async {
+    if (!isLikelyValidJpeg(jpegBytes)) {
+      _recordVisionLog(
+        'analyzeWithVision rejected malformed JPEG bytes=${jpegBytes.length}',
+      );
+      throw _malformedJpegException(jpegBytes.length);
+    }
     try {
       _recordVisionLog(
         'analyzeWithVision start imageBytes=${jpegBytes.length}',
@@ -640,6 +670,9 @@ class OnDeviceVisionService {
   /// Run the full Layer 1 pipeline: Apple Vision + Depth Anything V2 + YOLOv3.
   /// Returns a [ScenePerceptionResult] with spatial objects and depth tiers.
   Future<ScenePerceptionResult> analyzeScene(Uint8List jpegBytes) async {
+    if (!isLikelyValidJpeg(jpegBytes)) {
+      throw _malformedJpegException(jpegBytes.length);
+    }
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
         'analyzeScene',
@@ -840,6 +873,9 @@ class OnDeviceVisionService {
     required String systemPrompt,
     String? visionContext,
   }) {
+    if (!isLikelyValidJpeg(jpegBytes)) {
+      return Stream<String>.error(_malformedJpegException(jpegBytes.length));
+    }
     return _invokeTokenStream(
       channel: _vlmStream,
       method: 'describeImage',

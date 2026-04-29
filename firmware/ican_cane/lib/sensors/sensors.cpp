@@ -6,8 +6,13 @@
 #include <Adafruit_LSM6DSOX.h>
 #include <Arduino.h>
 #include <DFRobot_MatrixLidar.h>
+#define USE_ARDUINO_INTERRUPTS false
 #include <PulseSensorPlayground.h>
 #include <Wire.h>
+
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2
+#endif
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -127,7 +132,8 @@ float readLidar() {
 
 // ===========================================================================
 // Pulse Sensor — PulseSensor Playground library v1.x (polling mode)
-// USE_ARDUINO_INTERRUPTS=false set via build flag — library polls in loop().
+// USE_ARDUINO_INTERRUPTS=false is defined before the PulseSensor header in
+// this translation unit only; the library requires it not be global.
 // Hardware: PulseSensor Amped, 3.3V, analog pin A0 on Nano ESP32.
 // Threshold 2000 matches verified standalone firmware for this sensor.
 // ===========================================================================

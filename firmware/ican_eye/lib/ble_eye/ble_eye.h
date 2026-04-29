@@ -26,6 +26,7 @@ enum EyeCommand : uint8_t {
   EYE_CMD_STATUS = 3,
   EYE_CMD_LIVE_START = 4,
   EYE_CMD_LIVE_STOP = 5,
+  EYE_CMD_ABORT = 6,
 };
 
 /** Parsed command from BLE client. */

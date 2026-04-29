@@ -27,6 +27,16 @@
 #include "haptics.h"
 #include "sensors.h"
 
+// The esp32dev PlatformIO board does not expose Arduino Nano-style D6/D7
+// aliases. Keep the documented secondary I2C wiring compiling for both
+// environments.
+#ifndef D6
+#define D6 9
+#endif
+#ifndef D7
+#define D7 10
+#endif
+
 // ---------------------------------------------------------------------------
 // Pin Definitions
 // ---------------------------------------------------------------------------

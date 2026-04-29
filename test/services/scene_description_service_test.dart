@@ -338,6 +338,39 @@ void main() {
       },
     );
 
+    test('"I see" meta openings are stripped from Gemini output', () async {
+      await service.setMode(VisionMode.cloudOnly);
+      cloud.responseChunks = [
+        ['I see a clear hallway. The exit sign is at 11 o clock.'],
+      ];
+      cloud.finishReasons = ['STOP'];
+
+      final chunks = await service
+          .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+          .toList();
+
+      expect(chunks.single.toLowerCase(), isNot(contains('i see')));
+      expect(chunks.single, contains('The exit sign is at 11 o clock.'));
+    });
+
+    test(
+      '"The image shows" meta openings are stripped from Gemini output',
+      () async {
+        await service.setMode(VisionMode.cloudOnly);
+        cloud.responseChunks = [
+          ['The image shows a chair. A red chair is at 2 o clock.'],
+        ];
+        cloud.finishReasons = ['STOP'];
+
+        final chunks = await service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList();
+
+        expect(chunks.single.toLowerCase(), isNot(contains('image shows')));
+        expect(chunks.single, contains('A red chair is at 2 o clock.'));
+      },
+    );
+
     test('Gemini empty truncated output reports cloud diagnostic', () async {
       await service.setMode(VisionMode.cloudOnly);
       cloud.responseChunks = [

@@ -58,6 +58,7 @@ class EyeCaptureDiagnostic {
     this.sentChunks,
     this.sentBytes,
     this.failedSequence,
+    this.firmwareAbortReason,
   });
 
   final EyeCaptureDiagnosticCode code;
@@ -79,6 +80,10 @@ class EyeCaptureDiagnostic {
   final int? sentBytes;
   final int? failedSequence;
 
+  /// Optional trailing reason on `ERR:STREAM_ABORTED:...:reason`. Currently
+  /// only `"user"` is defined (sent when the app issued an ABORT command).
+  final String? firmwareAbortReason;
+
   String get stableCode => code.stableCode;
 
   String get spokenMessage {
@@ -91,6 +96,11 @@ class EyeCaptureDiagnostic {
             '$uniqueChunks chunks.';
       case EyeCaptureDiagnosticCode.streamStalled:
         if (firmwareError == 'STREAM_ABORTED') {
+          if (firmwareAbortReason == EyeEvents.abortReasonUser) {
+            return '$stableCode: capture cancelled by the app at '
+                '${sentBytes ?? receivedBytes}/$expected bytes after '
+                '${sentChunks ?? uniqueChunks} chunks.';
+          }
           return '$stableCode: firmware aborted image stream at '
               '${sentBytes ?? receivedBytes}/$expected bytes after '
               '${sentChunks ?? uniqueChunks} chunks.';
@@ -114,6 +124,39 @@ class EyeCaptureDiagnostic {
       case EyeCaptureDiagnosticCode.cameraCaptureFailed:
         return '$stableCode: firmware reported camera capture failure.';
     }
+  }
+
+  /// Multi-line copy-to-clipboard representation used by the Vision
+  /// Diagnostic screen. Kept stable so support can ask the user to paste
+  /// and diff against known-good output. Lines are ordered roughly from
+  /// "what went wrong" to "all the raw counters" so the most important
+  /// information stays on the first screen of any chat window.
+  String toCopyString() {
+    final lines = <String>[
+      '[$stableCode] ${code.name}',
+      'spoken: $spokenMessage',
+      'timeoutStage: ${timeoutStage?.label ?? 'none'}',
+      'captureStarted: $captureStarted',
+      'sizeArrived: $sizeArrived',
+      'endArrived: $endArrived',
+      'expectedBytes: $expectedBytes',
+      'receivedBytes: $receivedBytes',
+      'uniqueChunks: $uniqueChunks',
+      'duplicateChunks: $duplicateChunks',
+      'missedChunks: $missedChunks',
+      'jpegMagicValid: $jpegMagicValid',
+      'jpegEndValid: $jpegEndValid',
+    ];
+    if (expectedCrc != null) lines.add('expectedCrc: $expectedCrc');
+    if (actualCrc != null) lines.add('actualCrc: $actualCrc');
+    if (firmwareError != null) lines.add('firmwareError: $firmwareError');
+    if (sentChunks != null) lines.add('sentChunks: $sentChunks');
+    if (sentBytes != null) lines.add('sentBytes: $sentBytes');
+    if (failedSequence != null) lines.add('failedSequence: $failedSequence');
+    if (firmwareAbortReason != null) {
+      lines.add('firmwareAbortReason: $firmwareAbortReason');
+    }
+    return lines.join('\n');
   }
 
   @override
@@ -376,12 +419,16 @@ class EyeImageTransferAssembler {
 
     if (error.startsWith('${EyeEvents.streamAborted}:')) {
       final parts = error.split(':');
+      // Wire format: STREAM_ABORTED:{sentChunks}:{sentBytes}:{expectedBytes}[:{reason}]
       final diagnostic = _buildDiagnostic(
         EyeCaptureDiagnosticCode.streamStalled,
         firmwareError: EyeEvents.streamAborted,
         sentChunks: parts.length > 1 ? int.tryParse(parts[1]) : null,
         sentBytes: parts.length > 2 ? int.tryParse(parts[2]) : null,
         expectedBytesOverride: parts.length > 3 ? int.tryParse(parts[3]) : null,
+        firmwareAbortReason: parts.length > 4 && parts[4].isNotEmpty
+            ? parts[4]
+            : null,
       );
       reset();
       return diagnostic;
@@ -418,6 +465,7 @@ class EyeImageTransferAssembler {
     int? sentBytes,
     int? failedSequence,
     int? expectedBytesOverride,
+    String? firmwareAbortReason,
   }) {
     final bytes = _imageBuffer;
     final computedMagicValid =
@@ -446,6 +494,7 @@ class EyeImageTransferAssembler {
       sentChunks: sentChunks,
       sentBytes: sentBytes,
       failedSequence: failedSequence,
+      firmwareAbortReason: firmwareAbortReason,
     );
   }
 

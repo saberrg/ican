@@ -305,10 +305,22 @@ final class LlamaService {
             defer { mtmd_bitmap_free(bitmap) }
 
             // ── 2. Build prompt with image marker ──────────────────────────────
+            // The Dart side passes the current hazard-first spoken contract in
+            // `systemPrompt`; honour it instead of silently overriding with a
+            // generic prompt. Fall back to the old blind-user prompt only when
+            // no system prompt was supplied (legacy callers).
             let marker  = String(cString: mtmd_default_marker())
-            let userMsg = visionContext.map { "\($0)\n\nDescribe this scene." }
-                       ?? "Describe this scene for a blind person. Use clock positions (12 o'clock = straight ahead, 3 o'clock = right, 9 o'clock = left). Be concise."
-            let fullPrompt = "\(marker)\n\(userMsg)"
+            let defaultUserMsg = visionContext.map { "\($0)\n\nDescribe this scene." }
+                ?? "Describe this scene for a blind person. Use clock positions (12 o'clock = straight ahead, 3 o'clock = right, 9 o'clock = left). Be concise."
+            let trimmedSystem = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fullPrompt: String
+            if trimmedSystem.isEmpty {
+                fullPrompt = "\(marker)\n\(defaultUserMsg)"
+            } else if let ctx = visionContext, !ctx.isEmpty {
+                fullPrompt = "\(trimmedSystem)\n\n\(ctx)\n\n\(marker)\nDescribe this scene now."
+            } else {
+                fullPrompt = "\(trimmedSystem)\n\n\(marker)\nDescribe this scene now."
+            }
 
             // ── 3. Tokenize ────────────────────────────────────────────────────
             guard let chunks = mtmd_input_chunks_init() else {

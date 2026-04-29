@@ -189,6 +189,7 @@ class EyeCommands {
   EyeCommands._();
 
   static const String capture = 'CAPTURE';
+  static const String abort = 'ABORT';
   static const String liveStop = 'LIVE_STOP';
   static String liveStart(int intervalMs) => 'LIVE_START:$intervalMs';
   static String profile(int index) => 'PROFILE:$index';
@@ -206,9 +207,16 @@ class EyeEvents {
   static const String endPrefix = 'END:';
   static const String statusPrefix = 'STATUS:';
   static const String errorPrefix = 'ERR:';
+  static const String liveStarted = 'LIVE_STARTED';
+  static const String liveStopped = 'LIVE_STOPPED';
+  static const String liveBusy = 'LIVE_BUSY';
+  static const String liveIdle = 'LIVE_IDLE';
   static const String cameraCaptureFailed = 'CAMERA_CAPTURE_FAILED';
   static const String streamAborted = 'STREAM_ABORTED';
   static const String chunkNotifyFailed = 'CHUNK_NOTIFY_FAILED';
+
+  /// Firmware appends this reason when aborting due to an ABORT command.
+  static const String abortReasonUser = 'user';
 }
 
 // ===========================================================================
@@ -228,6 +236,11 @@ class ImagePacketHeader {
 
   static const int headerSize = 2;
   static const int maxPayload = 509;
+
+  /// Production firmware clamps each notify to this cap regardless of MTU.
+  /// See `firmware_payload_cap` in `protocol/ble_protocol.yaml` and
+  /// `EYE_IMAGE_FIRMWARE_PAYLOAD_CAP` in `firmware/shared/include/ble_protocol.h`.
+  static const int firmwarePayloadCap = 240;
 
   final int sequenceNumber;
 }

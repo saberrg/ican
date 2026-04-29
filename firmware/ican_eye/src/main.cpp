@@ -44,7 +44,11 @@ bool lastButtonReading = HIGH;
 // Live capture mode state
 bool liveMode = false;
 int liveIntervalMs = 1500;
-unsigned long lastLiveCaptureMs = 0;
+// Millisecond timestamp of the *end* of the last live capture so we can
+// enforce an idle gap that survives transfers longer than the configured
+// interval.  Must never double as a "next capture time" marker.
+unsigned long liveLastEndMs = 0;
+bool liveBusy = false;
 
 // ============================================================================
 // Setup
@@ -161,6 +165,7 @@ void loop() {
   // Stop live mode if client disconnected
   if (liveMode && !isBleEyeConnected()) {
     liveMode = false;
+    liveBusy = false;
     Serial.println("[Main] Client disconnected — live mode stopped.");
   }
 
@@ -185,10 +190,26 @@ void loop() {
     break;
   }
 
+  case EYE_CMD_ABORT: {
+    // ble_eye.cpp already flipped the in-flight abort flag; we only need to
+    // stop live mode so the next loop iteration does not immediately fire
+    // another capture.
+    if (liveMode) {
+      liveMode = false;
+      liveBusy = false;
+      sendControlMessage("LIVE_STOPPED");
+      Serial.println("[Main] ABORT command — live mode stopped.");
+    }
+    break;
+  }
+
   case EYE_CMD_LIVE_START: {
     liveMode = true;
     liveIntervalMs = cmd.liveIntervalMs;
-    lastLiveCaptureMs = 0;
+    // Reset the idle-gap clock so the first frame fires promptly but still
+    // respects the minimum 300ms gap below.
+    liveLastEndMs = millis();
+    liveBusy = false;
     Serial.printf("[Main] Live mode ON — interval %dms\n", liveIntervalMs);
     sendControlMessage("LIVE_STARTED");
     break;
@@ -196,6 +217,7 @@ void loop() {
 
   case EYE_CMD_LIVE_STOP: {
     liveMode = false;
+    liveBusy = false;
     Serial.println("[Main] Live mode OFF");
     sendControlMessage("LIVE_STOPPED");
     break;
@@ -232,11 +254,25 @@ void loop() {
     break;
   }
 
-  // Firmware-driven live capture: auto-capture at the requested interval
-  if (liveMode && isBleEyeConnected()) {
-    unsigned long now = millis();
-    if (now - lastLiveCaptureMs >= (unsigned long)liveIntervalMs) {
-      lastLiveCaptureMs = now;
+  // Firmware-driven live capture: auto-capture at the requested interval.
+  // The state machine here enforces two invariants:
+  //   1. Never start a new capture while the previous one is in flight
+  //      (`liveBusy`). Even though streamImageViaBle is synchronous, the
+  //      guard makes reasoning obvious and tolerates future async changes.
+  //   2. Always leave at least `idleGapMs = max(300ms, liveIntervalMs / 2)`
+  //      between captures, measured from the *end* of the previous transfer.
+  //      This prevents back-to-back captures when streaming takes longer than
+  //      the configured interval.
+  if (liveMode && !liveBusy && isBleEyeConnected()) {
+    const unsigned long now = millis();
+    const unsigned long idleGapMs =
+        (unsigned long)(liveIntervalMs / 2) < 300UL
+            ? 300UL
+            : (unsigned long)(liveIntervalMs / 2);
+    const unsigned long sinceEnd = now - liveLastEndMs;
+    if (sinceEnd >= (unsigned long)liveIntervalMs && sinceEnd >= idleGapMs) {
+      liveBusy = true;
+      sendControlMessage("LIVE_BUSY");
       sendControlMessage("CAPTURE:START");
       camera_fb_t *fb = capturePhoto();
       if (fb) {
@@ -245,6 +281,13 @@ void loop() {
         esp_camera_fb_return(fb);
       } else {
         sendControlMessage("ERR:CAMERA_CAPTURE_FAILED");
+      }
+      // Stamp *after* the blocking stream returns — the idle gap is relative
+      // to the END of the previous capture, not its start.
+      liveLastEndMs = millis();
+      liveBusy = false;
+      if (liveMode && isBleEyeConnected()) {
+        sendControlMessage("LIVE_IDLE");
       }
     }
   }

@@ -172,6 +172,73 @@ void main() {
       expect(diagnostic?.firmwareError, EyeEvents.chunkNotifyFailed);
       expect(diagnostic?.failedSequence, 7);
     });
+
+    test('user-initiated abort parses reason and rewords spoken message', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+
+      final result = assembler.handleControlMessage(
+        'ERR:${EyeEvents.streamAborted}:3:120:240:${EyeEvents.abortReasonUser}',
+      );
+
+      final diagnostic = result?.diagnostic;
+      expect(diagnostic?.stableCode, 'Eye E02');
+      expect(diagnostic?.firmwareError, EyeEvents.streamAborted);
+      expect(diagnostic?.sentChunks, 3);
+      expect(diagnostic?.sentBytes, 120);
+      expect(diagnostic?.expectedBytes, 240);
+      expect(diagnostic?.firmwareAbortReason, EyeEvents.abortReasonUser);
+      expect(diagnostic?.spokenMessage, contains('cancelled by the app'));
+    });
+
+    test('toCopyString includes every salient field for E02 stall', () {
+      const diagnostic = EyeCaptureDiagnostic(
+        code: EyeCaptureDiagnosticCode.streamStalled,
+        captureStarted: true,
+        sizeArrived: true,
+        expectedBytes: 34498,
+        receivedBytes: 33594,
+        uniqueChunks: 66,
+        duplicateChunks: 0,
+        missedChunks: 0,
+        endArrived: false,
+        jpegMagicValid: true,
+        jpegEndValid: false,
+        timeoutStage: EyeTransferTimeoutStage.awaitingEnd,
+        firmwareError: 'CHUNK_NOTIFY_FAILED',
+        failedSequence: 66,
+      );
+
+      final copy = diagnostic.toCopyString();
+      expect(copy, startsWith('[Eye E02] streamStalled'));
+      expect(copy, contains('expectedBytes: 34498'));
+      expect(copy, contains('receivedBytes: 33594'));
+      expect(copy, contains('uniqueChunks: 66'));
+      expect(copy, contains('firmwareError: CHUNK_NOTIFY_FAILED'));
+      expect(copy, contains('failedSequence: 66'));
+      expect(copy, contains('timeoutStage: awaiting END'));
+      expect(copy, contains('jpegMagicValid: true'));
+      expect(copy, contains('jpegEndValid: false'));
+    });
+
+    test('toCopyString for E03 includes CRC-related fields when set', () {
+      const diagnostic = EyeCaptureDiagnostic(
+        code: EyeCaptureDiagnosticCode.corruptOrIncompleteJpeg,
+        captureStarted: true,
+        sizeArrived: true,
+        expectedBytes: 120,
+        receivedBytes: 120,
+        uniqueChunks: 1,
+        duplicateChunks: 0,
+        endArrived: true,
+        jpegMagicValid: false,
+        jpegEndValid: false,
+      );
+
+      final copy = diagnostic.toCopyString();
+      expect(copy, startsWith('[Eye E03] corruptOrIncompleteJpeg'));
+      expect(copy, isNot(contains('expectedCrc')));
+      expect(copy, isNot(contains('firmwareError')));
+    });
   });
 }
 

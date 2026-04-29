@@ -494,6 +494,16 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       ..writeln()
       ..writeln(_errorText.isNotEmpty ? 'Error: $_errorText' : '');
 
+    // Append the most recent Eye capture diagnostic (if any) so support can
+    // see the BLE transfer state that produced a failed description.
+    final eyeDiag = BleService.instance.lastEyeCaptureDiagnostic;
+    if (eyeDiag != null) {
+      text
+        ..writeln()
+        ..writeln('--- Last Eye capture diagnostic ---')
+        ..writeln(eyeDiag.toCopyString());
+    }
+
     Clipboard.setData(ClipboardData(text: text.toString().trim()));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -501,6 +511,15 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
         duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  String _errorDisplayText() {
+    if (_errorText.isEmpty) return '';
+    final diag = BleService.instance.lastEyeCaptureDiagnostic;
+    if (diag == null) return _errorText;
+    // Surface the stable Eye E0x code prominently so a support request can
+    // quote it.  The copy-result button carries the full diagnostic.
+    return '[${diag.stableCode}] $_errorText';
   }
 
   Future<void> _copyAppLogs() async {
@@ -945,7 +964,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
                 border: Border.all(color: AppColors.error),
               ),
               child: Text(
-                _errorText,
+                _errorDisplayText(),
                 style: TextStyle(
                   fontSize: 14.sp,
                   color: AppColors.error,

@@ -19,11 +19,13 @@
 #include <BLE2902.h>
 #include <esp_gatts_api.h>
 #include <esp_gatt_common_api.h>
+#include <esp_gap_ble_api.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <string>
 #include <cstdio>
 #include "ble_protocol.h"
+#include "chunk_math.h"
 
 // =========================================================================
 // Internal State
@@ -44,6 +46,19 @@ static uint16_t s_negotiatedMtu = 23;          // BLE default ATT MTU
 static volatile uint16_t s_gattsIf = 0;
 static volatile uint16_t s_connId = 0;
 
+// Set by the ABORT command; polled inside the stream loop so the app can
+// cancel an in-flight transfer (e.g. user left the Describe screen).
+static volatile bool s_streamAbortRequested = false;
+
+// Adaptive pacing: grows on congestion, shrinks on clean chunks. Bounded
+// to [5, 50] ms.  Reset between transfers so a bad prior run does not
+// permanently slow the link.
+static volatile int s_paceMs = 8;
+
+// Set by sendNotify when a chunk needed backoff; sampled once per chunk by
+// sendImageChunk to decide whether to widen s_paceMs.
+static volatile bool s_congestionSeenThisChunk = false;
+
 static portMUX_TYPE s_cmdMux = portMUX_INITIALIZER_UNLOCKED;
 static EyeCommand pendingCmdType = EYE_CMD_NONE;
 static int pendingCmdProfile = 0;
@@ -57,13 +72,26 @@ class EyeServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
     clientConnected = true;
     s_congested = false;
+    s_streamAbortRequested = false;
+    s_paceMs = 8;
+    s_congestionSeenThisChunk = false;
     s_negotiatedMtu = 23;  // Reset to safe default; updated by onMtuChanged
     Serial.println("[BLE] Client connected. MTU reset to default.");
 
-    // Request an iOS-friendly interval: 30-50ms with a longer supervision
-    // timeout. This is less aggressive than the earlier 15-30ms request and
-    // avoids random CoreBluetooth disconnects during image transfer.
-    pServer->updateConnParams(param->connect.remote_bda, 24, 40, 0, 400);
+    // Request an iOS-friendly interval: 30-50ms, slave latency 0, and an
+    // 8-second supervision timeout (field 4 is in 10ms units, so 800 = 8s).
+    // Looser supervision gives iOS time to recover from transient congestion
+    // instead of tearing down the link during image transfer.
+    pServer->updateConnParams(param->connect.remote_bda, 24, 40, 0, 800);
+
+    // Request LE Data Length Extension so each ACL frame carries more data.
+    // Best-effort: iOS may refuse, in which case we stay on the 27-byte
+    // default.  Non-fatal on failure.
+    esp_err_t dleRc =
+        esp_ble_gap_set_pkt_data_len((uint8_t *)param->connect.remote_bda, 251);
+    if (dleRc != ESP_OK) {
+      Serial.printf("[BLE] DLE request non-fatal: rc=0x%x\n", dleRc);
+    }
   }
 
   void onDisconnect(BLEServer *server) override {
@@ -71,6 +99,10 @@ class EyeServerCallbacks : public BLEServerCallbacks {
     s_congested = false;
     s_connId = 0;
     s_gattsIf = 0;
+    // Streaming loop polls this; clear so the next connection starts clean.
+    s_streamAbortRequested = false;
+    s_paceMs = 8;
+    s_congestionSeenThisChunk = false;
     Serial.println("[BLE] Client disconnected. Restarting advertising shortly.");
     delay(250);
     BLEDevice::startAdvertising();
@@ -133,6 +165,16 @@ class CaptureCommandCallback : public BLECharacteristicCallbacks {
       pendingCmdProfile = 0;
       portEXIT_CRITICAL(&s_cmdMux);
       Serial.println("[BLE] CAPTURE command received");
+    } else if (cmd == "ABORT") {
+      // Signal the in-flight stream loop to unwind; also surface the command
+      // to the main loop so live mode stops.  The stream loop is responsible
+      // for emitting the ERR:STREAM_ABORTED:...:user response.
+      s_streamAbortRequested = true;
+      portENTER_CRITICAL(&s_cmdMux);
+      pendingCmdType = EYE_CMD_ABORT;
+      pendingCmdProfile = 0;
+      portEXIT_CRITICAL(&s_cmdMux);
+      Serial.println("[BLE] ABORT command received");
     } else if (cmd.startsWith("LIVE_START:")) {
       int intervalMs = cmd.substring(11).toInt();
       if (intervalMs < 500) intervalMs = 500;
@@ -271,10 +313,27 @@ EyeCommandData getLastEyeCommand() {
 // and conn_id captured in our custom GATTS event handler.  This gives us
 // the actual return code so we can wait and retry on congestion.
 
+// Spin-wait with yield while the controller reports TX congestion. Bounded
+// so a stuck connection cannot hang the task forever.
+static void waitForCongestionClear(int maxWaitMs) {
+  int waited = 0;
+  while (s_congested && clientConnected && waited < maxWaitMs) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+    waited += 10;
+  }
+}
+
 static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
   if (!clientConnected || s_gattsIf == 0) return false;
 
-  const int maxRetries = 25;
+  // If the controller is already complaining, give it air before the first
+  // attempt instead of queueing work we know will fail.
+  if (s_congested) {
+    s_congestionSeenThisChunk = true;
+    waitForCongestionClear(2000);
+  }
+
+  const int maxRetries = ican_eye_chunk_math::maxNotifyRetries();
 
   for (int attempt = 0; attempt < maxRetries; attempt++) {
     esp_err_t rc = esp_ble_gatts_send_indicate(
@@ -285,10 +344,16 @@ static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
 
     if (!clientConnected) return false;
 
-    // TX buffer full — yield to let the BLE controller drain it.
-    // Longer waits on later attempts (2ms → 20ms) to handle Windows BLE
-    // which drains slowly.
-    int waitMs = (attempt < 5) ? 5 : (attempt < 15) ? 20 : 50;
+    const bool isNoMem = (rc == ESP_ERR_NO_MEM);
+    s_congestionSeenThisChunk = true;
+
+    // If the controller signalled explicit congestion, wait for it to clear
+    // before the next retry instead of blasting into a saturated queue.
+    if (s_congested) {
+      waitForCongestionClear(500);
+    }
+
+    int waitMs = ican_eye_chunk_math::computeBackoffMs(attempt, isNoMem);
     vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
 
@@ -331,24 +396,23 @@ size_t sendImageChunk(uint16_t seqNum, const uint8_t *data, size_t dataLen) {
   if (!clientConnected)
     return 0;
 
-  // Cap payload to negotiated MTU (ATT overhead = 3 bytes) and protocol max
-  const size_t mtuPayload = (s_negotiatedMtu > 3 + IMAGE_HEADER_BYTES)
-                                ? (s_negotiatedMtu - 3 - IMAGE_HEADER_BYTES)
-                                : 0;
-  const size_t effectiveMax = (mtuPayload < IMAGE_MAX_PAYLOAD) ? mtuPayload : IMAGE_MAX_PAYLOAD;
+  // Cap payload to negotiated MTU and firmware cap (see chunk_math.h).
+  const size_t effectiveMax =
+      ican_eye_chunk_math::effectivePayloadBytes(s_negotiatedMtu);
+  if (effectiveMax == 0)
+    return 0;
   if (dataLen > effectiveMax)
     dataLen = effectiveMax;
   if (dataLen == 0)
     return 0;
 
   uint8_t chunkBuf[IMAGE_MAX_PACKET_SIZE];
-
-  // Pack header (2 bytes): sequence number (LE)
-  chunkBuf[0] = (uint8_t)(seqNum & 0xFF);
-  chunkBuf[1] = (uint8_t)((seqNum >> 8) & 0xFF);
-
-  // Copy payload
+  ican_eye_chunk_math::packSeqLE(chunkBuf, seqNum);
   memcpy(chunkBuf + IMAGE_HEADER_BYTES, data, dataLen);
+
+  // Reset the per-chunk congestion witness before the notify; sendNotify will
+  // set it if it needed to back off.
+  s_congestionSeenThisChunk = false;
 
   if (!sendNotify(pImageStreamChar->getHandle(),
                   chunkBuf, IMAGE_HEADER_BYTES + dataLen)) {
@@ -356,13 +420,17 @@ size_t sendImageChunk(uint16_t seqNum, const uint8_t *data, size_t dataLen) {
     return 0;
   }
 
-  // Inter-chunk pacing: yield to BLE task so notifications get flushed.
-  // Every 10 chunks, add a longer drain pause for the remote BLE stack.
-  if (seqNum > 0 && seqNum % 10 == 0) {
-    vTaskDelay(pdMS_TO_TICKS(25));
-  } else {
-    vTaskDelay(pdMS_TO_TICKS(8));
+  // Adaptive pacing: widen the inter-chunk gap when this chunk hit
+  // congestion; walk it back toward the minimum when the link is clean.
+  // Bounds [5, 50] ms keep sustained transfers within a reliable envelope.
+  if (s_congestionSeenThisChunk) {
+    int next = s_paceMs + 4;
+    if (next > 50) next = 50;
+    s_paceMs = next;
+  } else if (s_paceMs > 5) {
+    s_paceMs = s_paceMs - 1;
   }
+  vTaskDelay(pdMS_TO_TICKS(s_paceMs));
   return dataLen;
 }
 
@@ -371,11 +439,15 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
   if (!clientConnected)
     return;
 
-  // Effective max payload per chunk (for logging)
-  const size_t mtuPayload = (s_negotiatedMtu > 3 + IMAGE_HEADER_BYTES)
-                                ? (s_negotiatedMtu - 3 - IMAGE_HEADER_BYTES)
-                                : 0;
-  const size_t effectiveMax = (mtuPayload < IMAGE_MAX_PAYLOAD) ? mtuPayload : IMAGE_MAX_PAYLOAD;
+  // Reset per-stream flow-control state so a bad prior run does not carry
+  // over.  Also clear any stale abort request: we only honour ABORT
+  // commands received *after* the stream started.
+  s_streamAbortRequested = false;
+  s_paceMs = 8;
+  s_congestionSeenThisChunk = false;
+
+  const size_t effectiveMax =
+      ican_eye_chunk_math::effectivePayloadBytes(s_negotiatedMtu);
   if (effectiveMax == 0) {
     char abortMsg[64];
     snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:0:0:%u",
@@ -392,7 +464,7 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                 estChunks, profileName);
 
   // 1. Send SIZE
-  char ctrlMsg[32];
+  char ctrlMsg[64];
   snprintf(ctrlMsg, sizeof(ctrlMsg), "SIZE:%u", (unsigned)jpegLen);
   sendControlMessage(ctrlMsg);
   vTaskDelay(pdMS_TO_TICKS(30)); // Let client process SIZE before chunks arrive
@@ -402,23 +474,36 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
   sendControlMessage(ctrlMsg);
   vTaskDelay(pdMS_TO_TICKS(20));
 
-  // 2. Stream image chunks with retry on failure
+  // 2. Stream image chunks with retry on failure.
   const unsigned long startMs = millis();
   uint16_t seqNum = 0;
   size_t offset = 0;
+  // Per-chunk retries live inside sendNotify; this counter tracks how many
+  // chunks in a row failed outright, so we abort a wedged transfer.
   int consecutiveFails = 0;
+  const int consecutiveFailsLimit = 8;
   bool aborted = false;
+  const char *abortReason = nullptr; // e.g. "user"
+  const int drainEvery = ican_eye_chunk_math::drainGapEveryNChunks();
 
   while (offset < jpegLen) {
     if (!isBleEyeConnected()) {
       Serial.println("[BLE] Client disconnected mid-stream — aborting.");
-      return;
+      aborted = true;
+      break;
     }
+    if (s_streamAbortRequested) {
+      Serial.println("[BLE] ABORT received mid-stream — unwinding.");
+      aborted = true;
+      abortReason = "user";
+      break;
+    }
+
     size_t remaining = jpegLen - offset;
     size_t sent = sendImageChunk(seqNum, jpegBuf + offset, remaining);
     if (sent == 0) {
       consecutiveFails++;
-      if (consecutiveFails > 3) {
+      if (consecutiveFails >= consecutiveFailsLimit) {
         Serial.printf("[BLE] %d consecutive failures — aborting stream.\n",
                       consecutiveFails);
         snprintf(ctrlMsg, sizeof(ctrlMsg), "ERR:CHUNK_NOTIFY_FAILED:%u",
@@ -427,7 +512,8 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
         aborted = true;
         break;
       }
-      // Wait and retry the SAME chunk — don't skip data
+      // Wait for the controller to drain, then retry the SAME chunk.
+      waitForCongestionClear(500);
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
@@ -435,25 +521,39 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
     offset += sent;
     seqNum++;
     if (seqNum % 20 == 0) {
-      Serial.printf("[BLE] Progress: chunk %u, %u/%u bytes (%.0f%%)\n",
+      Serial.printf("[BLE] Progress: chunk %u, %u/%u bytes (%.0f%%) pace=%dms\n",
                     seqNum, (unsigned)offset, (unsigned)jpegLen,
-                    offset * 100.0 / jpegLen);
+                    offset * 100.0 / jpegLen, s_paceMs);
+    }
+
+    // Periodic drain gap: regardless of observed congestion, give the iOS
+    // ACL queue room to breathe every N chunks.  Short-circuited when
+    // clear.
+    if (drainEvery > 0 && (seqNum % drainEvery) == 0) {
+      waitForCongestionClear(200);
     }
   }
 
   const unsigned long elapsed = millis() - startMs;
 
   if (aborted || offset < jpegLen) {
-    char abortMsg[64];
-    snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:%u:%u:%u",
-             seqNum, (unsigned)offset, (unsigned)jpegLen);
+    char abortMsg[80];
+    if (abortReason != nullptr) {
+      snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:%u:%u:%u:%s",
+               seqNum, (unsigned)offset, (unsigned)jpegLen, abortReason);
+    } else {
+      snprintf(abortMsg, sizeof(abortMsg), "ERR:STREAM_ABORTED:%u:%u:%u",
+               seqNum, (unsigned)offset, (unsigned)jpegLen);
+    }
     sendControlMessage(abortMsg);
-    Serial.printf("[BLE] Stream aborted: %u chunks, %u/%u bytes\n",
-                  seqNum, (unsigned)offset, (unsigned)jpegLen);
+    Serial.printf("[BLE] Stream aborted: %u chunks, %u/%u bytes%s\n",
+                  seqNum, (unsigned)offset, (unsigned)jpegLen,
+                  abortReason ? " (user)" : "");
+    s_streamAbortRequested = false;
     return;
   }
 
-  // 3. Send END — repeated 3× with gaps to survive BLE notification loss
+  // 3. Send END — repeated 3× with gaps to survive BLE notification loss.
   vTaskDelay(pdMS_TO_TICKS(30));
   snprintf(ctrlMsg, sizeof(ctrlMsg), "END:%u", seqNum);
   for (int i = 0; i < 3; i++) {
@@ -463,6 +563,7 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
 
   const float kbps = (elapsed > 0) ? (jpegLen / 1024.0f) / (elapsed / 1000.0f) : 0;
   Serial.printf("[BLE] Transfer complete: %u chunks, %u bytes in %lu ms "
-                "(%.1f KB/s, %d retried)\n",
-                seqNum, (unsigned)offset, elapsed, kbps, consecutiveFails);
+                "(%.1f KB/s, %d retried, pace=%dms)\n",
+                seqNum, (unsigned)offset, elapsed, kbps, consecutiveFails,
+                s_paceMs);
 }

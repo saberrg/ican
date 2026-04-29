@@ -1,6 +1,20 @@
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ican/services/on_device_vision_service.dart';
+
+/// Build a JPEG envelope big enough to pass `isLikelyValidJpeg`. Contents in
+/// the middle are irrelevant to the tests — only the SOI/EOI markers and the
+/// >= 1024-byte length are checked.
+Uint8List _fakeJpeg({int length = 2048}) {
+  final bytes = Uint8List(length);
+  bytes[0] = 0xFF;
+  bytes[1] = 0xD8;
+  bytes[length - 2] = 0xFF;
+  bytes[length - 1] = 0xD9;
+  return bytes;
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -55,6 +69,48 @@ void main() {
     },
   );
 
+  test('rejects malformed JPEG before crossing native channel', () async {
+    var methodCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          methodCalls++;
+          throw PlatformException(
+            code: 'SHOULD_NOT_REACH',
+            message: 'pre-validator must gate this call',
+          );
+        });
+
+    final service = OnDeviceVisionService();
+    final truncated = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xD9]);
+
+    await expectLater(
+      service.analyzeWithVision(truncated),
+      throwsA(
+        isA<LocalVisionException>()
+            .having((e) => e.code, 'code', 'Local L00')
+            .having(
+              (e) => e.message,
+              'message',
+              contains('corrupt or incomplete'),
+            ),
+      ),
+    );
+    await expectLater(
+      service.analyzeScene(truncated),
+      throwsA(
+        isA<LocalVisionException>().having((e) => e.code, 'code', 'Local L00'),
+      ),
+    );
+    await expectLater(
+      service.describeWithVlm(truncated, systemPrompt: 'p').first,
+      throwsA(
+        isA<LocalVisionException>().having((e) => e.code, 'code', 'Local L00'),
+      ),
+    );
+
+    expect(methodCalls, 0);
+  });
+
   test('pings native channel and Apple Vision availability', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -107,9 +163,7 @@ void main() {
           });
 
       await expectLater(
-        OnDeviceVisionService().analyzeWithVision(
-          Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
-        ),
+        OnDeviceVisionService().analyzeWithVision(_fakeJpeg()),
         throwsA(
           isA<LocalVisionException>()
               .having((e) => e.code, 'code', 'Local L03')
@@ -301,10 +355,7 @@ void main() {
         });
 
     final chunks = await OnDeviceVisionService()
-        .describeWithVlm(
-          Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
-          systemPrompt: 'Describe.',
-        )
+        .describeWithVlm(_fakeJpeg(), systemPrompt: 'Describe.')
         .toList();
 
     expect(order.take(2), ['listen', 'invoke']);
@@ -370,10 +421,7 @@ void main() {
 
     await expectLater(
       OnDeviceVisionService()
-          .describeWithVlm(
-            Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
-            systemPrompt: 'Describe.',
-          )
+          .describeWithVlm(_fakeJpeg(), systemPrompt: 'Describe.')
           .drain<void>(),
       throwsA(
         isA<LocalVisionException>()

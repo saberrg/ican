@@ -181,7 +181,11 @@ void main() {
         expect(trace!.stage, DescribePipelineStage.completed);
         expect(trace.imageBytes, greaterThan(0));
         expect(trace.visionMode, VisionMode.auto.name);
-        expect(trace.detailLevel, DetailLevel.detailed.name);
+        // SettingsProvider default is now DetailLevel.brief (reliability
+        // overhaul: one opinionated spoken contract).  The trace must echo
+        // whatever default SettingsProvider currently ships so the test
+        // does not silently drift when the default moves again.
+        expect(trace.detailLevel, DetailLevel.brief.name);
       },
     );
 

@@ -24,7 +24,11 @@ const CameraProfile profiles[] = {
 };
 const int NUM_PROFILES = sizeof(profiles) / sizeof(profiles[0]);
 
-static int currentProfile = 1; // default: BALANCED
+// Default to FAST for reliability: VGA + quality 12 keeps JPEGs in the
+// ~8-15 KB range so a single capture finishes over BLE well before the
+// iOS ACL queue saturates. Operators can still switch via the PROFILE
+// command for diagnostics.
+static int currentProfile = 0; // default: FAST
 
 // =========================================================================
 // Init

@@ -240,9 +240,121 @@ final class ModelDownloadManager: NSObject {
     }
 
     private func isFileValid(_ file: ModelFile, at url: URL, verifyHash: Bool) -> Bool {
-        guard fileSize(at: url) == file.sizeBytes else { return false }
+        guard fileSize(at: url) == file.sizeBytes else {
+            invalidateSidecar(for: url)
+            return false
+        }
         guard verifyHash else { return true }
-        return sha256Hex(of: url) == file.sha256
+
+        // Fast path: a sidecar file recorded a matching hash earlier. We trust
+        // it as long as the main file's size + modification time have not
+        // changed. Full SHA256 on ~440 MB models takes ~20-30 s on older
+        // devices, so skipping it on every launch is load-bearing for the
+        // "SmolVLM2 does not appear to re-download" acceptance criterion.
+        if let sidecar = readSidecar(for: url),
+           sidecar.sizeBytes == file.sizeBytes,
+           sidecar.sha256.caseInsensitiveCompare(file.sha256) == .orderedSame,
+           let mtime = fileModificationTime(at: url),
+           abs(mtime.timeIntervalSince1970 - sidecar.mtimeEpoch) < 0.001 {
+            return true
+        }
+
+        // Slow path: recompute and, on success, persist a sidecar so future
+        // launches take the fast path above.
+        guard
+            let actual = sha256Hex(of: url),
+            actual.caseInsensitiveCompare(file.sha256) == .orderedSame
+        else {
+            invalidateSidecar(for: url)
+            return false
+        }
+        if let mtime = fileModificationTime(at: url) {
+            writeSidecar(
+                for: url,
+                entry: VerifiedSidecar(
+                    sha256: file.sha256,
+                    sizeBytes: file.sizeBytes,
+                    mtimeEpoch: mtime.timeIntervalSince1970
+                )
+            )
+        }
+        return true
+    }
+
+    // MARK: - Sidecar (.verified) helpers
+
+    private struct VerifiedSidecar {
+        let sha256: String
+        let sizeBytes: UInt64
+        let mtimeEpoch: TimeInterval
+    }
+
+    private func sidecarURL(for url: URL) -> URL {
+        return url.appendingPathExtension("verified")
+    }
+
+    private func readSidecar(for url: URL) -> VerifiedSidecar? {
+        let sidecar = sidecarURL(for: url)
+        guard FileManager.default.fileExists(atPath: sidecar.path) else { return nil }
+        guard let data = try? Data(contentsOf: sidecar) else { return nil }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        guard
+            let sha = obj["sha256"] as? String,
+            let size = (obj["size"] as? NSNumber)?.uint64Value,
+            let mtime = (obj["mtime"] as? NSNumber)?.doubleValue
+        else {
+            return nil
+        }
+        return VerifiedSidecar(sha256: sha, sizeBytes: size, mtimeEpoch: mtime)
+    }
+
+    private func writeSidecar(for url: URL, entry: VerifiedSidecar) {
+        let sidecar = sidecarURL(for: url)
+        let payload: [String: Any] = [
+            "sha256": entry.sha256,
+            "size": NSNumber(value: entry.sizeBytes),
+            "mtime": NSNumber(value: entry.mtimeEpoch),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
+            return
+        }
+        // Atomic: write to a temp path in the same directory, then rename.
+        // A crash mid-write would otherwise wedge future launches into a full
+        // rehash even though the model itself is fine.
+        let tmp = sidecar.appendingPathExtension("tmp")
+        do {
+            if FileManager.default.fileExists(atPath: tmp.path) {
+                try FileManager.default.removeItem(at: tmp)
+            }
+            try data.write(to: tmp, options: [.atomic])
+            if FileManager.default.fileExists(atPath: sidecar.path) {
+                try FileManager.default.removeItem(at: sidecar)
+            }
+            try FileManager.default.moveItem(at: tmp, to: sidecar)
+            // Exclude from backup so Apple doesn't try to upload a cache tag.
+            var mutable = sidecar
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? mutable.setResourceValues(values)
+        } catch {
+            print("[ModelDownload] Failed to persist sidecar for \(url.lastPathComponent): \(error)")
+        }
+    }
+
+    private func invalidateSidecar(for url: URL) {
+        let sidecar = sidecarURL(for: url)
+        if FileManager.default.fileExists(atPath: sidecar.path) {
+            try? FileManager.default.removeItem(at: sidecar)
+        }
+    }
+
+    private func fileModificationTime(at url: URL) -> Date? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        return attrs[.modificationDate] as? Date
     }
 
     private func fileSize(at url: URL) -> UInt64 {

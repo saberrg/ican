@@ -161,9 +161,12 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // ── Descriptions ──
-  DetailLevel _detailLevel = DetailLevel.detailed;
+  // Defaults line up with the single hazard-first prompt contract shipped in
+  // ScenePromptBuilder.  The individual knobs are now no-ops at the builder
+  // level but are kept persisted for backward compat + a future debug panel.
+  DetailLevel _detailLevel = DetailLevel.brief;
   HazardSensitivity _hazardSensitivity = HazardSensitivity.medium;
-  PromptProfile _promptProfile = PromptProfile.balanced;
+  PromptProfile _promptProfile = PromptProfile.safety;
 
   DetailLevel get detailLevel => _detailLevel;
   HazardSensitivity get hazardSensitivity => _hazardSensitivity;
@@ -188,8 +191,10 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // ── Live Detection ──
+  // Minimal verbosity keeps Live-mode TTS focused on the single top object so
+  // the state machine has time to cooldown before the next frame.
   LiveDetectionVerbosity _liveDetectionVerbosity =
-      LiveDetectionVerbosity.positional;
+      LiveDetectionVerbosity.minimal;
 
   LiveDetectionVerbosity get liveDetectionVerbosity => _liveDetectionVerbosity;
 

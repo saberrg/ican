@@ -161,7 +161,8 @@ class SceneDescriptionService extends ChangeNotifier {
   Stream<String> describeScene(
     Uint8List imageBytes, {
     required String systemPrompt,
-    String userPrompt = 'Describe what you see.',
+    String userPrompt =
+        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
     int maxOutputTokens = 500,
     void Function(String status, VisionBackend backend)? onStatusUpdate,
   }) async* {
@@ -234,15 +235,32 @@ class SceneDescriptionService extends ChangeNotifier {
     }
   }
 
+  static const Duration _localHealthCheckTimeout = Duration(seconds: 5);
+
   Future<bool> _basicLocalVisionReady() async {
-    try {
-      final nativeReady = await onDeviceService.pingNativeChannel();
-      if (!nativeReady) return false;
-      return onDeviceService.isAppleVisionAvailable();
-    } catch (e) {
-      debugPrint('[SceneDescription] Local health check failed: $e');
-      return false;
+    Future<bool> check() async {
+      try {
+        final nativeReady = await onDeviceService.pingNativeChannel();
+        if (!nativeReady) return false;
+        return await onDeviceService.isAppleVisionAvailable();
+      } catch (e) {
+        debugPrint('[SceneDescription] Local health check failed: $e');
+        return false;
+      }
     }
+
+    // Race the check against a hard timeout — a wedged native channel must
+    // never block auto-mode from falling through to its next decision.
+    return Future.any<bool>([
+      check(),
+      Future<bool>.delayed(_localHealthCheckTimeout, () {
+        debugPrint(
+          '[SceneDescription] Local health check exceeded '
+          '${_localHealthCheckTimeout.inSeconds}s; treating as unavailable.',
+        );
+        return false;
+      }),
+    ]);
   }
 
   // Single-backend entry points for diagnostics.
@@ -250,7 +268,8 @@ class SceneDescriptionService extends ChangeNotifier {
   Stream<String> describeWithGemini(
     Uint8List imageBytes, {
     required String systemPrompt,
-    String userPrompt = 'Describe what you see.',
+    String userPrompt =
+        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
     int maxOutputTokens = 500,
   }) {
     return _describeWithCloud(
@@ -373,7 +392,8 @@ class SceneDescriptionService extends ChangeNotifier {
         return _describeWithCloud(
           imageBytes,
           systemPrompt: systemPrompt,
-          userPrompt: 'Describe what you see.',
+          userPrompt:
+              'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
           maxOutputTokens: 500,
         );
       case VisionBackend.foundationModels:
@@ -635,7 +655,18 @@ class SceneDescriptionService extends ChangeNotifier {
         RegExp(
           r'\b(continue|continuation)\s+(the\s+)?(response|answer)\b',
         ).hasMatch(lower) ||
-        RegExp(r'\bwriting process\b').hasMatch(lower);
+        RegExp(r'\bwriting process\b').hasMatch(lower) ||
+        // Meta openings the new prompt bans outright — drop them if a model
+        // slips one in rather than shipping "I see a street." to TTS.
+        RegExp(r'\bi\s+(see|can\s+see|notice|observe)\b').hasMatch(lower) ||
+        RegExp(
+          r'\b(the|this)\s+(image|photo|picture|scene)\s+shows\b',
+        ).hasMatch(lower) ||
+        RegExp(
+          r'\b(it\s+looks\s+like|in\s+this\s+(image|photo|picture))\b',
+        ).hasMatch(lower) ||
+        RegExp(r'\bas\s+an\s+ai\b').hasMatch(lower) ||
+        RegExp(r"\b(cannot|can't)\s+(see|determine|tell)\b").hasMatch(lower);
   }
 
   static _CloudRescueResult _rescueTruncatedCloudText(String text) {
@@ -711,12 +742,26 @@ class SceneDescriptionService extends ChangeNotifier {
   }
 
   /// VLM path: Layer 1 perception context fed into SmolVLM2.
+  ///
+  /// When [allowTemplateFallback] is true (the default auto-mode path) the
+  /// stream *never* throws once perception has succeeded: VLM crashes or
+  /// timeouts downgrade to the Layer 1 template so a blind user always hears
+  /// something useful. The diagnostic-direct path on the developer screen
+  /// sets the flag to false so raw errors surface.
   Stream<String> _describeWithVlm(
     Uint8List imageBytes, {
     required String systemPrompt,
     bool allowTemplateFallback = true,
   }) async* {
-    final perception = await onDeviceService.analyzeScene(imageBytes);
+    ScenePerceptionResult? perception;
+    try {
+      perception = await onDeviceService.analyzeScene(imageBytes);
+    } catch (e) {
+      debugPrint('[SceneDescription] Perception failed before VLM: $e');
+      if (!allowTemplateFallback) rethrow;
+      yield 'Scene analysis unavailable on device right now.';
+      return;
+    }
     final context = perception.toPromptContext();
 
     debugPrint('[SceneDescription] VLM context: $context');

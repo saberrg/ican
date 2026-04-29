@@ -8,10 +8,26 @@ import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
 import '../models/settings_provider.dart';
+import '../services/app_log_service.dart';
 import '../services/ble_service.dart';
 import '../services/on_device_vision_service.dart';
 import '../services/tts_service.dart';
 import '../widgets/accessible_button.dart';
+
+/// Discrete states the live-detection loop can occupy. Enforced by
+/// [_LiveDetectionScreenState._setLive] so transitions are always logged and
+/// illegal jumps (e.g. transferring -> stopping without a cooldown) don't
+/// silently corrupt the UI or TTS queue.
+enum LiveState {
+  idle,
+  starting,
+  transferring,
+  analyzing,
+  speaking,
+  cooldown,
+  stopping,
+  error,
+}
 
 class _DetectionEvent {
   final String label;
@@ -39,16 +55,23 @@ class LiveDetectionScreen extends StatefulWidget {
 class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
   final OnDeviceVisionService _vision = OnDeviceVisionService();
   final TtsService _tts = TtsService.instance;
+  final BleService _ble = BleService.instance;
 
   bool _checkingPrereqs = true;
   String? _errorMessage;
   String? _errorHint;
 
   StreamSubscription<Uint8List>? _imageSub;
-  bool _processing = false;
-  bool _liveStarted = false;
+  StreamSubscription<void>? _connectionSub;
   _LiveDetectionMode _mode = _LiveDetectionMode.basic;
   String? _modeHint;
+
+  LiveState _state = LiveState.idle;
+  Completer<void>? _inflightAnalysis;
+  DateTime? _lastDisconnectSpokenAt;
+  // How long to stay in cooldown between frames. Keeps us from starting the
+  // next analysis back-to-back before TTS finishes speaking the last one.
+  static const Duration _cooldownDuration = Duration(milliseconds: 600);
 
   Uint8List? _latestImage;
   List<SpatialObjectData> _detections = [];
@@ -59,6 +82,49 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
   void initState() {
     super.initState();
     _checkPrerequisites();
+  }
+
+  /// Centralised state transition. Logs every change and blocks illegal
+  /// jumps; returns true if the transition happened.
+  bool _setLive(LiveState next) {
+    if (!mounted) return false;
+    if (_state == next) return true;
+    final allowed = _isTransitionAllowed(_state, next);
+    if (!allowed) {
+      debugPrint(
+        '[LiveDetection] Rejected transition ${_state.name} -> ${next.name}',
+      );
+      return false;
+    }
+    AppLogService.instance.record(
+      'Live state ${_state.name} -> ${next.name}',
+      source: 'live',
+    );
+    setState(() => _state = next);
+    return true;
+  }
+
+  bool _isTransitionAllowed(LiveState from, LiveState to) {
+    // `error` and `stopping` are always reachable — they terminate loops.
+    if (to == LiveState.error || to == LiveState.stopping) return true;
+    switch (from) {
+      case LiveState.idle:
+        return to == LiveState.starting;
+      case LiveState.starting:
+        return to == LiveState.transferring || to == LiveState.idle;
+      case LiveState.transferring:
+        return to == LiveState.analyzing || to == LiveState.cooldown;
+      case LiveState.analyzing:
+        return to == LiveState.speaking || to == LiveState.cooldown;
+      case LiveState.speaking:
+        return to == LiveState.cooldown;
+      case LiveState.cooldown:
+        return to == LiveState.transferring || to == LiveState.idle;
+      case LiveState.stopping:
+        return to == LiveState.idle;
+      case LiveState.error:
+        return to == LiveState.idle;
+    }
   }
 
   Future<void> _checkPrerequisites() async {
@@ -113,36 +179,57 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       );
     });
 
-    _imageSub = BleService.instance.imageStream.listen(
+    _setLive(LiveState.starting);
+
+    _imageSub = _ble.imageStream.listen(
       _handleImage,
-      onError: (e) {
+      onError: (Object e) {
         debugPrint('[LiveDetection] imageStream error: $e');
       },
     );
 
-    await BleService.instance.setEyeProfile(0);
-    await BleService.instance.startLiveCapture(intervalMs: 1500);
-    _liveStarted = true;
+    // Listen for Eye disconnect mid-session so we can cleanly shut down TTS,
+    // cancel in-flight analysis, and announce the failure exactly once.
+    _connectionSub = _ble.connectionEventStream
+        .where(
+          (event) =>
+              event.deviceKind == BleDeviceKind.eye && event.ready == false,
+        )
+        .listen((_) => _handleEyeDisconnected());
+
+    await _ble.setEyeProfile(0);
+    await _ble.startLiveCapture(intervalMs: 1500);
+    // Transition into transferring so the first incoming chunk is accepted.
+    _setLive(LiveState.transferring);
   }
 
   Future<void> _handleImage(Uint8List imageBytes) async {
-    if (_processing || !mounted) return;
-    _processing = true;
+    if (!mounted) return;
+    // Drop frames that arrive while we're already busy analyzing/speaking.
+    // Only transferring/cooldown are valid entry points.
+    if (_state != LiveState.transferring && _state != LiveState.cooldown) {
+      return;
+    }
 
     if (mounted) {
       setState(() => _latestImage = imageBytes);
     }
+    if (!_setLive(LiveState.analyzing)) return;
+
+    final completer = Completer<void>();
+    _inflightAnalysis = completer;
 
     try {
       final result = await _vision.analyzeScene(imageBytes);
-      if (!mounted) {
-        _processing = false;
+      // Caller aborted (disconnect/stop) while we were analyzing.
+      if (!mounted || completer != _inflightAnalysis) {
+        completer.complete();
         return;
       }
 
       if (_mode == _LiveDetectionMode.basic) {
         _handleBasicResult(result);
-        _processing = false;
+        _enterCooldown(completer);
         return;
       }
 
@@ -215,7 +302,39 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       debugPrint('[LiveDetection] analyzeScene failed: $e');
     }
 
-    _processing = false;
+    _enterCooldown(completer);
+  }
+
+  void _enterCooldown(Completer<void> completer) {
+    if (!mounted || completer != _inflightAnalysis) {
+      completer.complete();
+      return;
+    }
+    _setLive(LiveState.cooldown);
+    Future<void>.delayed(_cooldownDuration, () {
+      if (!mounted) return;
+      if (_inflightAnalysis != completer) return;
+      if (_state != LiveState.cooldown) return;
+      _setLive(LiveState.transferring);
+      _inflightAnalysis = null;
+      completer.complete();
+    });
+  }
+
+  Future<void> _handleEyeDisconnected() async {
+    if (!mounted) return;
+    // Debounce: speak the disconnect notice at most once every 5 seconds.
+    final now = DateTime.now();
+    final last = _lastDisconnectSpokenAt;
+    if (last == null || now.difference(last) >= const Duration(seconds: 5)) {
+      _lastDisconnectSpokenAt = now;
+      unawaited(_tts.speak('iCan Eye disconnected. Live mode stopped.'));
+    }
+    _inflightAnalysis = null;
+    await _tts.stop();
+    _setLive(LiveState.stopping);
+    _stopLoop();
+    if (mounted) _setLive(LiveState.idle);
   }
 
   void _handleBasicResult(ScenePerceptionResult result) {
@@ -307,13 +426,20 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
   }
 
   void _stopLoop() {
-    if (_liveStarted) {
-      BleService.instance.stopLiveCapture();
-      BleService.instance.setEyeProfile(1);
-      _liveStarted = false;
+    // Only send commands if a capture has actually started. `starting` also
+    // counts so we unwind partial setup cleanly.
+    final wasActive = _state != LiveState.idle && _state != LiveState.error;
+    if (wasActive) {
+      // Best-effort: abort any in-flight transfer, stop live mode on the Eye.
+      unawaited(_ble.sendEyeAbort());
+      unawaited(_ble.stopLiveCapture());
+      unawaited(_ble.setEyeProfile(1));
     }
     _imageSub?.cancel();
     _imageSub = null;
+    _connectionSub?.cancel();
+    _connectionSub = null;
+    _inflightAnalysis = null;
   }
 
   @override

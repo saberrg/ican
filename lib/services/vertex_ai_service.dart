@@ -183,7 +183,8 @@ class VertexAiService extends ChangeNotifier {
   Future<String> generateContentFromImage(
     Uint8List imageBytes, {
     required String systemPrompt,
-    String userPrompt = 'Describe what you see.',
+    String userPrompt =
+        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
     int maxOutputTokens = 500,
   }) async {
     final base64Image = base64Encode(imageBytes);
@@ -270,7 +271,8 @@ class VertexAiService extends ChangeNotifier {
   Stream<String> streamContentFromImage(
     Uint8List imageBytes, {
     required String systemPrompt,
-    String userPrompt = 'Describe what you see.',
+    String userPrompt =
+        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
     int maxOutputTokens = 500,
   }) async* {
     _assertApiKeyPresent();

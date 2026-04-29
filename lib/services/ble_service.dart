@@ -205,15 +205,6 @@ class BleService extends ChangeNotifier {
   StreamSubscription<List<int>>? _gpsSub;
 
   final EyeImageTransferAssembler _imageAssembler = EyeImageTransferAssembler();
-  // Legacy counters kept only for low-level debug logging while the structured
-  // assembler above owns actual frame validation and emission.
-  final List<int> _imageBuffer = [];
-  int _expectedImageSize = 0;
-  int _lastSequenceNumber = -1;
-  int _lostChunks = 0;
-  final Set<int> _seenSequenceNumbers = {};
-  bool _frameEmitted = false;
-  int _frameSessionId = 0;
   String _lastControlMessage = ''; // Dedup control messages
   DateTime? _lastControlMessageTime;
   Timer? _imageTimeoutTimer;
@@ -230,8 +221,6 @@ class BleService extends ChangeNotifier {
   static const Duration _eyeHeartbeatInterval = Duration(seconds: 15);
   static const Duration _eyeReconnectInitialDelay = Duration(seconds: 3);
   static const Duration _eyeReconnectMaxDelay = Duration(seconds: 30);
-
-  bool get _legacyImageAssemblerEnabled => false;
 
   // Known MAC for the iCan Eye hardware. Used as fallback when no device has
   // been saved yet, and as the auto-connect target on startup.
@@ -1440,129 +1429,19 @@ class BleService extends ChangeNotifier {
       }
       _handleImageAssemblyEvent(event);
     }
-
-    if (_legacyImageAssemblerEnabled && message.startsWith('SIZE:')) {
-      final newSize = int.tryParse(message.substring(5)) ?? 0;
-
-      // Ignore duplicate SIZE messages while we're already accumulating this
-      // frame. iOS BLE can fire the same notification 2-3× and each duplicate
-      // would wipe the buffer mid-transfer.
-      if (_imageBuffer.isNotEmpty &&
-          newSize == _expectedImageSize &&
-          !_frameEmitted) {
-        debugPrint(
-          '[BLE] Ignoring duplicate SIZE:$newSize (already buffering ${_imageBuffer.length} bytes)',
-        );
-        return;
-      }
-
-      _imageBuffer.clear();
-      _seenSequenceNumbers.clear();
-      _lastSequenceNumber = -1;
-      _lostChunks = 0;
-      _frameEmitted = false;
-      _frameSessionId++;
-      _expectedImageSize = newSize;
-      debugPrint('[BLE] Expecting image of size $_expectedImageSize bytes');
-      _captureStartedController.add(null);
-
-      _armImageTransferTimeout();
-    } else if (_legacyImageAssemblerEnabled && message.startsWith('END:')) {
-      _imageTimeoutTimer?.cancel();
-      debugPrint(
-        '[BLE] Transfer END. Buffer has ${_imageBuffer.length}/$_expectedImageSize bytes. '
-        'Chunks received: ${_seenSequenceNumbers.length}, Lost: $_lostChunks',
-      );
-
-      if (_imageBuffer.isEmpty || _frameEmitted) return;
-
-      if (_imageBuffer.length != _expectedImageSize) {
-        final endSessionId = _frameSessionId;
-        debugPrint('[BLE] Size mismatch — waiting 300ms for late chunks...');
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (endSessionId != _frameSessionId) return;
-          if (_imageBuffer.isNotEmpty && !_frameEmitted) {
-            debugPrint(
-              '[BLE] Emitting ${_imageBuffer.length} bytes (partial).',
-            );
-            _emitImageIfValid(_imageBuffer);
-            _imageBuffer.clear();
-            _expectedImageSize = 0;
-          }
-        });
-      } else {
-        _emitImageIfValid(_imageBuffer);
-        _imageBuffer.clear();
-        _expectedImageSize = 0;
-      }
-    }
   }
 
   void _handleIncomingImageChunk(Uint8List data) {
     if (data.length <= ImagePacketHeader.headerSize) return;
 
     try {
-      final header = ImagePacketHeader.fromBytes(data);
-      final payload = data.sublist(ImagePacketHeader.headerSize);
-
       final event = _imageAssembler.handleImageChunk(data);
-      if (event != null) {
-        if (event.progress) {
-          _armImageTransferTimeout();
-        }
-        _handleImageAssemblyEvent(event);
-      }
+      if (event == null) return;
 
-      // Log first chunk for diagnostics
-      if (header.sequenceNumber == 0) {
-        debugPrint(
-          '[BLE] Chunk 0: ${data.length} bytes total, '
-          '${payload.length} payload, '
-          'header=[${data.take(4).map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ')}]',
-        );
+      if (event.progress) {
+        _armImageTransferTimeout();
       }
-      // Log progress every 10 chunks
-      if (header.sequenceNumber > 0 && header.sequenceNumber % 10 == 0) {
-        debugPrint(
-          '[BLE] Chunk ${header.sequenceNumber}: buffer=${_imageBuffer.length + payload.length}/$_expectedImageSize bytes',
-        );
-      }
-
-      // Defensive reset: seq 0 without a prior SIZE: means we missed the control message
-      if (header.sequenceNumber == 0 && _lastSequenceNumber != -1) {
-        debugPrint(
-          '[BLE] WARN: Got chunk 0 without SIZE: — clearing stale state.',
-        );
-        _imageBuffer.clear();
-        _seenSequenceNumbers.clear();
-        _lastSequenceNumber = -1;
-        _lostChunks = 0;
-        _frameEmitted = false;
-      }
-
-      // Deduplicate — skip chunks we've already processed
-      if (_seenSequenceNumbers.contains(header.sequenceNumber)) return;
-      _seenSequenceNumbers.add(header.sequenceNumber);
-
-      if (_lastSequenceNumber != -1 &&
-          header.sequenceNumber != _lastSequenceNumber + 1) {
-        debugPrint(
-          '[BLE] WARN: Missed chunk! Expected ${_lastSequenceNumber + 1}, got ${header.sequenceNumber}',
-        );
-        _lostChunks++;
-      }
-      _lastSequenceNumber = header.sequenceNumber;
-
-      // Structured assembler above owns buffering.
-      _armImageTransferTimeout();
-
-      if (_expectedImageSize > 0 &&
-          _imageBuffer.length >= _expectedImageSize &&
-          !_frameEmitted) {
-        _emitImageIfValid(_imageBuffer);
-        _imageBuffer.clear();
-        _expectedImageSize = 0;
-      }
+      _handleImageAssemblyEvent(event);
     } catch (e) {
       debugPrint('[BLE] Chunk error: $e');
     }
@@ -1811,47 +1690,13 @@ class BleService extends ChangeNotifier {
     _emitImageTimeoutDiagnostic(context: 'Capture command response timeout.');
   }
 
-  void _emitImageIfValid(List<int> buffer) {
-    final bytes = Uint8List.fromList(buffer);
-
-    if (bytes.length < 2 || bytes[0] != 0xFF || bytes[1] != 0xD8) {
-      debugPrint(
-        '[BLE] ERROR: Not a valid JPEG (first 6 bytes: '
-        '${bytes.take(6).map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}').join(' ')}). '
-        'Discarding ${bytes.length} bytes.',
-      );
-      return;
-    }
-
-    // Reject severely truncated frames — a JPEG missing >25% of its data
-    // will produce heavy artifacts that confuse the vision AI. Better to
-    // discard and let the user retry than send garbage to the API.
-    if (_expectedImageSize > 0) {
-      final pct = bytes.length * 100 ~/ _expectedImageSize;
-      if (pct < 75) {
-        debugPrint(
-          '[BLE] WARN: Image too incomplete '
-          '(${bytes.length}/$_expectedImageSize = $pct%). Discarding.',
-        );
-        return;
-      }
-      debugPrint(
-        '[BLE] Emitting ${bytes.length} bytes ($pct% of $_expectedImageSize expected).',
-      );
-    } else {
-      debugPrint(
-        '[BLE] Emitting ${bytes.length} bytes (expected size unknown).',
-      );
-    }
-
-    _imageController.add(bytes);
-    _frameEmitted = true;
-  }
-
   /// Disconnect from the current device and clear the saved device ID.
   /// Call this when the user manually disconnects to prevent auto-reconnect on next startup.
   Future<void> disconnectAndForget() async {
     debugPrint('[BLE] Disconnecting and clearing saved device...');
+    // Best-effort tell the Eye to cancel any in-flight stream before we tear
+    // down the link.  Ignored silently if we are already disconnected.
+    await sendEyeAbort();
     _preferredEyeDeviceId = null;
     _cancelEyeReconnect();
     _stopEyeHeartbeat();
@@ -1980,6 +1825,18 @@ class BleService extends ChangeNotifier {
   /// Stop firmware-driven periodic capture.
   Future<void> stopLiveCapture() => _sendEyeCommand(EyeCommands.liveStop);
 
+  /// Cancel any in-flight image transfer on the Eye and reset the Flutter
+  /// assembler. Use when the user leaves the Describe/Live screen mid-transfer
+  /// or when we detect a disconnect/reconnect race. Old firmware returns
+  /// `ERR:UNKNOWN_COMMAND`; we treat that as informational and still reset
+  /// local state so the next capture starts clean.
+  Future<void> sendEyeAbort() async {
+    _cancelImageTransfer(reset: true);
+    if (_state == BleConnectionState.connected) {
+      await _sendEyeCommand(EyeCommands.abort);
+    }
+  }
+
   /// Send a camera profile change command to the Eye.
   /// Profile indices: 0=FAST, 1=BALANCED, 2=QUALITY, 3=MAX
   Future<void> setEyeProfile(int profileIndex) =>
@@ -2023,6 +1880,11 @@ class BleService extends ChangeNotifier {
     _stopEyeHeartbeat();
     _eyeReconnectAttempt = 0;
     _missedEyeHeartbeats = 0;
+    // The Eye capture diagnostic is cached for the Vision Diagnostic screen,
+    // so clearing it between tests avoids a prior test's E0x leaking into the
+    // next case's assertions on lastEyeCaptureDiagnostic.
+    _lastEyeCaptureDiagnostic = null;
+    _imageAssembler.reset();
   }
 
   // ---------------------------------------------------------------------------

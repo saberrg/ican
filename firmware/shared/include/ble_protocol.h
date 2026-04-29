@@ -129,6 +129,21 @@ static_assert(sizeof(GpsPacket) == 19, "GpsPacket must be 19 bytes");
 constexpr uint8_t IMAGE_HEADER_BYTES = 2;
 constexpr uint16_t IMAGE_MAX_PAYLOAD = 509;
 constexpr uint16_t IMAGE_MAX_PACKET_SIZE = 512;
+// Production firmware clamps each notify payload to this value regardless of
+// MTU. Keeps iOS BLE ACL queues from saturating and causing late-stream
+// ERR:CHUNK_NOTIFY_FAILED at 97%+ completion. The Flutter assembler reads the
+// actual chunk size per packet, so this is safe below IMAGE_MAX_PAYLOAD.
+constexpr uint16_t EYE_IMAGE_FIRMWARE_PAYLOAD_CAP = 240;
+
+// ===========================================================================
+// Eye Command String Literals (App → Eye via eye_capture_rx, WRITE)
+// ===========================================================================
+constexpr const char* EYE_CMD_CAPTURE_STR = "CAPTURE";
+constexpr const char* EYE_CMD_ABORT_STR   = "ABORT";
+constexpr const char* EYE_CMD_LIVE_START_PREFIX = "LIVE_START:";
+constexpr const char* EYE_CMD_LIVE_STOP_STR = "LIVE_STOP";
+constexpr const char* EYE_CMD_PROFILE_PREFIX = "PROFILE:";
+constexpr const char* EYE_CMD_STATUS_STR = "STATUS";
 
 #pragma pack(push, 1)
 struct ImagePacketHeader {

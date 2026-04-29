@@ -151,6 +151,43 @@ void main() {
   });
 
   test(
+    'sendEyeAbort while disconnected resets assembler and emits no diagnostic',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      AppLogService.instance.resetForTesting();
+      await AppLogService.instance.init();
+
+      BleService.instance.setEyeConnectionStateForTesting(
+        BleConnectionState.disconnected,
+      );
+
+      // Arm the assembler as if a capture were mid-flight.
+      BleService.instance.beginEyeCaptureCommandForTesting();
+      BleService.instance.handleEyeControlMessageForTesting(
+        EyeEvents.captureStart,
+      );
+      BleService.instance.handleEyeControlMessageForTesting(
+        '${EyeEvents.sizePrefix}1024',
+      );
+
+      var diagnosticCount = 0;
+      final sub = BleService.instance.eyeCaptureDiagnosticStream.listen((_) {
+        diagnosticCount++;
+      });
+
+      await BleService.instance.sendEyeAbort();
+      await Future<void>.delayed(Duration.zero);
+
+      // The abort path resets state silently — no diagnostic, no last-error
+      // capture surfaced to the UI.
+      expect(diagnosticCount, 0);
+      expect(BleService.instance.lastEyeCaptureDiagnostic, isNull);
+
+      await sub.cancel();
+    },
+  );
+
+  test(
     'missed Eye heartbeat marks not ready and schedules reconnect',
     () async {
       SharedPreferences.setMockInitialValues({});

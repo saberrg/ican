@@ -71,6 +71,7 @@ characteristics:
       CAPTURE: "Single-shot capture"
       LIVE_START: "Start firmware-driven periodic capture. Format: LIVE_START:{intervalMs}"
       LIVE_STOP: "Stop firmware-driven periodic capture"
+      ABORT: "Cancel the in-flight image stream and stop live mode. Firmware replies with ERR:STREAM_ABORTED:...:user."
       PROFILE: "Switch camera quality profile. Format: PROFILE:{index}"
       STATUS: "Request current status"
     events:
@@ -80,8 +81,12 @@ characteristics:
       "SIZE:{bytes}": "JPEG byte length for the next image stream."
       "CRC:{hex}": "CRC32 of the complete JPEG payload."
       "END:{chunks}": "Image stream finished after the given chunk count."
+      "LIVE_STARTED": "Live mode enabled; firmware will auto-capture at the configured interval."
+      "LIVE_STOPPED": "Live mode disabled."
+      "LIVE_BUSY": "Live-mode capture is in flight; no overlapping capture will begin."
+      "LIVE_IDLE": "Live-mode idle gap between captures."
       "ERR:CAMERA_CAPTURE_FAILED": "Camera driver failed to return a JPEG frame."
-      "ERR:STREAM_ABORTED:{sentChunks}:{sentBytes}:{expectedBytes}": "Firmware aborted an incomplete image stream."
+      "ERR:STREAM_ABORTED:{sentChunks}:{sentBytes}:{expectedBytes}[:reason]": "Firmware aborted an incomplete image stream. Optional reason suffix (e.g. 'user') identifies why."
       "ERR:CHUNK_NOTIFY_FAILED:{sequence}": "Firmware could not notify a chunk after retries."
       "ERR:{code}": "Firmware command error."
 
@@ -207,12 +212,18 @@ gps_packet:
 # Byte 0-1:  sequence_number (uint16_t, little-endian)
 # Byte 2+:   payload (up to 509 bytes of JPEG data)
 #
-# No per-chunk checksum — BLE link layer provides CRC. Integrity is validated
-# by JPEG magic bytes and optional CRC:{hex} control messages.
+# The protocol max payload stays 509 for back-compat with older firmware, but
+# production iCan Eye firmware clamps outgoing chunks to `firmware_payload_cap`
+# bytes (240) to keep iOS BLE ACL queues well below saturation. The Flutter
+# assembler derives chunk size from each packet, so smaller chunks are safe.
+#
+# No per-chunk checksum — BLE link layer provides CRC. End-to-end integrity is
+# validated by JPEG magic bytes and the CRC:{hex} control message.
 image_packet:
   header_bytes: 2
   max_payload_bytes: 509
   max_packet_bytes: 512
+  firmware_payload_cap: 240
   fields:
     - name: sequence_number
       offset: 0
