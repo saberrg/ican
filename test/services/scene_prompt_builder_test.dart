@@ -72,6 +72,14 @@ void main() {
       expect(brief.maxOutputTokens, lessThan(detailed.maxOutputTokens));
       expect(brief.systemPrompt, contains('40 centimeters'));
       expect(detailed.systemPrompt, contains('150 centimeters'));
+      expect(
+        brief.systemPrompt,
+        contains('exactly 3 complete spoken sentences'),
+      );
+      expect(
+        detailed.systemPrompt,
+        contains('4 or 5 complete spoken sentences'),
+      );
     });
 
     test('system prompt bans meta phrases unsafe for a blind user', () {
@@ -110,7 +118,7 @@ void main() {
     test('max output tokens stays small for spoken output', () {
       final contract = builder.build();
 
-      expect(contract.maxOutputTokens, lessThanOrEqualTo(400));
+      expect(contract.maxOutputTokens, lessThanOrEqualTo(500));
       expect(contract.maxOutputTokens, greaterThan(0));
     });
   });

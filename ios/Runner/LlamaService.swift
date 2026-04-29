@@ -189,7 +189,7 @@ final class LlamaService {
 
         let marker = String(cString: mtmd_default_marker())
         let prompt = systemPrompt.isEmpty
-            ? "Describe this image in one concise sentence."
+            ? "Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details."
             : systemPrompt
         let fullPrompt = "\(marker)\n\(prompt)"
 
@@ -265,7 +265,7 @@ final class LlamaService {
         var firstTokenLatencyMs: Int?
         var decodeResult = 0
 
-        for _ in 0..<48 {
+        for _ in 0..<128 {
             let tokenId = llama_sampler_sample(sampler, ctx, -1)
             llama_sampler_accept(sampler, tokenId)
             if llama_vocab_is_eog(vocab, tokenId) { break }
@@ -388,15 +388,15 @@ final class LlamaService {
             // no system prompt was supplied (legacy callers).
             let marker  = String(cString: mtmd_default_marker())
             let defaultUserMsg = visionContext.map { "\($0)\n\nDescribe this scene." }
-                ?? "Describe this scene for a blind person. Use clock positions (12 o'clock = straight ahead, 3 o'clock = right, 9 o'clock = left). Be concise."
+                ?? "Describe this scene for a blind person in 3 to 5 complete spoken sentences. Use clock positions (12 o'clock = straight ahead, 3 o'clock = right, 9 o'clock = left), include hazards, readable text, people, landmarks, and the safest visible path."
             let trimmedSystem = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             let fullPrompt: String
             if trimmedSystem.isEmpty {
                 fullPrompt = "\(marker)\n\(defaultUserMsg)"
             } else if let ctx = visionContext, !ctx.isEmpty {
-                fullPrompt = "\(trimmedSystem)\n\n\(ctx)\n\n\(marker)\nDescribe this scene now."
+                fullPrompt = "\(trimmedSystem)\n\n\(ctx)\n\n\(marker)\nDescribe this scene now in the full requested 3 to 5 complete spoken sentences."
             } else {
-                fullPrompt = "\(trimmedSystem)\n\n\(marker)\nDescribe this scene now."
+                fullPrompt = "\(trimmedSystem)\n\n\(marker)\nDescribe this scene now in the full requested 3 to 5 complete spoken sentences."
             }
 
             // ── 3. Tokenize ────────────────────────────────────────────────────
@@ -448,7 +448,7 @@ final class LlamaService {
             // ── 6. Generate tokens ─────────────────────────────────────────────
             var pieceBuf = [CChar](repeating: 0, count: 256)
 
-            for _ in 0..<300 {
+            for _ in 0..<420 {
                 let tokenId = llama_sampler_sample(sampler, ctx, -1)
                 llama_sampler_accept(sampler, tokenId)
 
@@ -568,12 +568,15 @@ final class LlamaService {
         let wordRegex = try? NSRegularExpression(pattern: #"[A-Za-z0-9']+"#)
         let range = NSRange(output.startIndex..<output.endIndex, in: output)
         let words = wordRegex?.numberOfMatches(in: output, range: range) ?? 0
-        if words < 8 { return false }
+        if words < 24 { return false }
+        let sentenceRegex = try? NSRegularExpression(pattern: #"[^.!?]+[.!?]+["')\]]*(?=\s|$)"#)
+        let sentenceCount = sentenceRegex?.numberOfMatches(in: output, range: range) ?? 0
+        if sentenceCount < 3 { return false }
         let lower = output.lowercased()
         let banned = #"\b(smolvlm|llama|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b"#
         if lower.range(of: banned, options: .regularExpression) != nil { return false }
         let tokens = lower.split { $0 == " " || $0 == "\n" || $0 == "\t" }.map(String.init)
-        guard tokens.count >= 8 else { return false }
+        guard tokens.count >= 24 else { return false }
         for i in 0...(tokens.count - 8) {
             if tokens[i..<(i + 4)].joined(separator: " ") == tokens[(i + 4)..<(i + 8)].joined(separator: " ") {
                 return false

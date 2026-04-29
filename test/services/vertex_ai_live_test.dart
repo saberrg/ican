@@ -33,9 +33,9 @@ void main() {
           .describeScene(
             _jpegBytes,
             systemPrompt:
-                'Describe this image in one concise sentence for a blind user.',
-            userPrompt: 'Describe this test image in one short sentence.',
-            maxOutputTokens: 80,
+                'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
+            userPrompt: 'Describe this test image in 3 complete sentences.',
+            maxOutputTokens: 220,
           )
           .toList();
       final text = chunks.join().trim();

@@ -178,7 +178,7 @@ class SceneDescriptionService extends ChangeNotifier {
     Uint8List imageBytes, {
     required String systemPrompt,
     String userPrompt =
-        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
+        'What does a blind user need to know right now to move and stay safe? Speak 3 to 5 complete sentences.',
     int maxOutputTokens = 500,
     ScenePromptContext promptContext = const ScenePromptContext(),
     void Function(String status, VisionBackend backend)? onStatusUpdate,
@@ -245,7 +245,7 @@ class SceneDescriptionService extends ChangeNotifier {
 
     VisionAnalysis perception;
     try {
-      perception = await onDeviceService.analyzeWithVision(imageBytes);
+      perception = await _analyzeOfflinePerception(imageBytes);
     } catch (e) {
       throw SceneDescriptionException.localVision(e);
     }
@@ -288,7 +288,7 @@ class SceneDescriptionService extends ChangeNotifier {
       '[SceneDescription] Offline generative backends unavailable; using template',
     );
     return _offlineResult(
-      perception.toTemplateDescription(),
+      _templateDescriptionFor(perception),
       VisionBackend.visionOnly,
     );
   }
@@ -389,6 +389,10 @@ class SceneDescriptionService extends ChangeNotifier {
         debugPrint('[SceneDescription] $label produced no usable output');
         return null;
       }
+      if (!_isSubstantialOfflineDescription(cleaned)) {
+        debugPrint('[SceneDescription] $label output was too thin for TTS');
+        return null;
+      }
       _lastBackend = backend;
       _lastCompletionMetadata = SceneCompletionMetadata.complete;
       return cleaned;
@@ -396,6 +400,25 @@ class SceneDescriptionService extends ChangeNotifier {
       debugPrint('[SceneDescription] $label failed; falling back: $e');
       return null;
     }
+  }
+
+  Future<VisionAnalysis> _analyzeOfflinePerception(Uint8List imageBytes) async {
+    try {
+      return await onDeviceService.analyzeScene(imageBytes);
+    } catch (e) {
+      debugPrint(
+        '[SceneDescription] Full offline perception unavailable; '
+        'using Apple Vision basics: $e',
+      );
+      return onDeviceService.analyzeWithVision(imageBytes);
+    }
+  }
+
+  String _templateDescriptionFor(VisionAnalysis perception) {
+    if (perception is ScenePerceptionResult) {
+      return perception.toTemplateDescription();
+    }
+    return perception.toTemplateDescription();
   }
 
   Future<String> _collectFoundationModelsText(
@@ -419,7 +442,7 @@ class SceneDescriptionService extends ChangeNotifier {
   }) async {
     final context = perception.toPromptContext();
     final enhancedPrompt = context.isNotEmpty
-        ? '$systemPrompt\n\nUse the sensor context below for hazards, clock positions, and visible text.\n\n$context'
+        ? '$systemPrompt\n\nUse the sensor context below for hazards, clock positions, depth, people, and visible text. Do not ignore it. Produce the full requested 3 to 5 sentence answer.\n\n$context'
         : systemPrompt;
     return _collectLocalTokenStream(
       onDeviceService.describeWithVlm(
@@ -492,13 +515,23 @@ class SceneDescriptionService extends ChangeNotifier {
     return _ensureSentencePunctuation(normalized);
   }
 
+  static bool _isSubstantialOfflineDescription(String text) {
+    final normalized = _cleanLocalDescriptionText(text);
+    if (normalized == 'Scene unclear, try again.') return true;
+    final words = RegExp(r"[A-Za-z0-9']+").allMatches(normalized).length;
+    final sentences = RegExp(
+      r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''',
+    ).allMatches(normalized).length;
+    return sentences >= 3 && words >= 24;
+  }
+
   // Single-backend entry points for diagnostics.
 
   Stream<String> describeWithGemini(
     Uint8List imageBytes, {
     required String systemPrompt,
     String userPrompt =
-        'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
+        'What does a blind user need to know right now to move and stay safe? Speak 3 to 5 complete sentences.',
     int maxOutputTokens = 500,
   }) {
     return _describeWithCloud(
@@ -900,7 +933,7 @@ class SceneDescriptionService extends ChangeNotifier {
     debugPrint('[SceneDescription] VLM context: $context');
 
     final enhancedPrompt = context.isNotEmpty
-        ? '$systemPrompt\n\n$context\n\nDescribe this scene incorporating the context above.'
+        ? '$systemPrompt\n\n$context\n\nDescribe this scene incorporating the context above. Produce the full requested 3 to 5 complete spoken sentences.'
         : systemPrompt;
 
     var gotTokens = false;
@@ -962,8 +995,18 @@ extension VisionAnalysisTemplate on VisionAnalysis {
       } else {
         sentences.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
       }
+    } else {
+      sentences.add('No readable text was detected in this offline frame.');
     }
 
+    if (sentences.length < 3) {
+      sentences.add(
+        'Obstacle depth and clear walking space are not available from this basic scan.',
+      );
+    }
+    if (sentences.length < 3) {
+      sentences.add('Retake the photo before moving if you need path detail.');
+    }
     return sentences.join(' ');
   }
 }
@@ -986,6 +1029,8 @@ extension ScenePerceptionResultTemplate on ScenePerceptionResult {
     if (close.isNotEmpty) {
       final descs = close.take(3).map((o) => o.spatialLabel).join(', ');
       sentences.add('Caution: $descs.');
+    } else if (hasDepthMap) {
+      sentences.add('No close object was detected by the depth scan.');
     }
 
     if (personCount > 0) {
@@ -1001,6 +1046,8 @@ extension ScenePerceptionResultTemplate on ScenePerceptionResult {
       } else {
         sentences.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
       }
+    } else {
+      sentences.add('No readable text was detected in this offline frame.');
     }
 
     final others = detectedObjects
@@ -1012,7 +1059,18 @@ extension ScenePerceptionResultTemplate on ScenePerceptionResult {
       );
     }
 
-    return sentences.join(' ');
+    if (sentences.length < 3) {
+      sentences.add(
+        hasDepthMap
+            ? 'The depth scan has limited detail beyond the listed objects.'
+            : 'Depth detail is unavailable, so move slowly and rescan if the path is uncertain.',
+      );
+    }
+    if (sentences.length < 3) {
+      sentences.add('Retake the photo before moving if you need path detail.');
+    }
+
+    return sentences.take(5).join(' ');
   }
 }
 

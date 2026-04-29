@@ -26,15 +26,15 @@ void main() {
 
     test('uses Foundation Models when available', () async {
       onDevice.foundationModelsAvailable = true;
-      onDevice.foundationModelsOutput = 'Foundation model description';
+      onDevice.foundationModelsOutput = _richFoundationDescription;
 
       final result = await service.describeOffline(_jpegBytes);
 
       expect(result.backend, VisionBackend.foundationModels);
-      expect(result.text, 'Foundation model description.');
+      expect(result.text, _richFoundationDescription);
       expect(onDevice.loadVlmCalls, 0);
-      expect(onDevice.analyzeSceneCalls, 0);
-      expect(onDevice.analyzeWithVisionCalls, 1);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
     test('offline generated prompt receives selected prompt context', () async {
@@ -63,16 +63,16 @@ void main() {
 
     test('uses SmolVLM only after readiness probe passes', () async {
       onDevice.smolReadinessPassed = true;
-      onDevice.vlmOutput = 'SmolVLM2 description';
+      onDevice.vlmOutput = _richVlmDescription;
 
       final result = await service.describeOffline(_jpegBytes);
 
       expect(result.backend, VisionBackend.vlm);
-      expect(result.text, 'SmolVLM2 description.');
+      expect(result.text, _richVlmDescription);
       expect(onDevice.smolReadinessCalls, 1);
       expect(onDevice.loadVlmCalls, 0);
-      expect(onDevice.analyzeSceneCalls, 0);
-      expect(onDevice.analyzeWithVisionCalls, 1);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
     test('skips SmolVLM when model files exist but probe failed', () async {
@@ -88,6 +88,23 @@ void main() {
       expect(onDevice.smolReadinessCalls, 1);
       expect(onDevice.loadVlmCalls, 0);
       expect(onDevice.vlmSystemPrompts, isEmpty);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
+    });
+
+    test('thin local generated output falls back to richer template', () async {
+      onDevice.foundationModelsAvailable = true;
+      onDevice.foundationModelsOutput = 'A hallway is ahead.';
+      onDevice.smolReadinessPassed = false;
+
+      final result = await service.describeOffline(_jpegBytes);
+
+      expect(result.backend, VisionBackend.visionOnly);
+      expect(
+        result.text,
+        contains('Caution: chair at 12 o\'clock, very close'),
+      );
+      expect(_sentenceCount(result.text), greaterThanOrEqualTo(3));
     });
 
     test(
@@ -96,16 +113,16 @@ void main() {
         onDevice.foundationModelsAvailable = true;
         onDevice.foundationModelsOutput = '';
         onDevice.smolReadinessPassed = true;
-        onDevice.vlmOutput = 'SmolVLM2 description';
+        onDevice.vlmOutput = _richVlmDescription;
 
         final result = await service.describeOffline(_jpegBytes);
 
         expect(result.backend, VisionBackend.vlm);
-        expect(result.text, 'SmolVLM2 description.');
+        expect(result.text, _richVlmDescription);
         expect(onDevice.smolReadinessCalls, 1);
         expect(onDevice.loadVlmCalls, 0);
-        expect(onDevice.analyzeSceneCalls, 0);
-        expect(onDevice.analyzeWithVisionCalls, 1);
+        expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeWithVisionCalls, 0);
       },
     );
 
@@ -126,7 +143,26 @@ void main() {
         expect(result.text, contains('hallway setting'));
         expect(onDevice.smolReadinessCalls, 1);
         expect(onDevice.loadVlmCalls, 0);
-        expect(onDevice.analyzeSceneCalls, 0);
+        expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeWithVisionCalls, 0);
+      },
+    );
+
+    test(
+      'falls back to basic Apple Vision when spatial perception fails',
+      () async {
+        onDevice.analyzeSceneError = const LocalVisionException(
+          'Local L02',
+          'Spatial perception failed.',
+        );
+        onDevice.smolReadinessPassed = false;
+
+        final result = await service.describeOffline(_jpegBytes);
+
+        expect(result.backend, VisionBackend.visionOnly);
+        expect(result.text, contains('hallway setting'));
+        expect(_sentenceCount(result.text), greaterThanOrEqualTo(3));
+        expect(onDevice.analyzeSceneCalls, 1);
         expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
@@ -134,6 +170,10 @@ void main() {
     test(
       'reports local failure when Apple Vision cannot analyze the image',
       () async {
+        onDevice.analyzeSceneError = const LocalVisionException(
+          'Local L02',
+          'Apple Vision failed.',
+        );
         onDevice.analyzeWithVisionError = const LocalVisionException(
           'Local L03',
           'Apple Vision failed.',
@@ -153,6 +193,7 @@ void main() {
         );
 
         expect(onDevice.loadVlmCalls, 0);
+        expect(onDevice.analyzeSceneCalls, 1);
         expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
@@ -189,8 +230,8 @@ void main() {
       expect(service.lastCloudFailure, isA<CloudVisionException>());
       expect(service.lastBackend, VisionBackend.visionOnly);
       expect(chunks.join(), contains('hallway setting'));
-      expect(onDevice.analyzeSceneCalls, 0);
-      expect(onDevice.analyzeWithVisionCalls, 1);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
     test(
@@ -451,6 +492,14 @@ void main() {
 
 final _jpegBytes = Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]);
 
+const _richFoundationDescription =
+    'Caution: a chair is directly ahead at 12 o clock within reach. The hallway continues forward with one person nearby. Text reads EXIT above the path.';
+const _richVlmDescription =
+    'Caution: a chair is directly ahead at 12 o clock within reach. The hallway is open beyond it with a person nearby. Text reads EXIT near the top of the scene.';
+
+int _sentenceCount(String text) =>
+    RegExp(r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''').allMatches(text).length;
+
 class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool foundationModelsAvailable = false;
   ModelStatus modelStatus = ModelStatus.notDownloaded;
@@ -459,8 +508,8 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool nativeReady = false;
   bool appleVisionReady = false;
   bool vlmProducesOutput = true;
-  String foundationModelsOutput = 'Foundation model description.';
-  String vlmOutput = 'SmolVLM2 description.';
+  String foundationModelsOutput = _richFoundationDescription;
+  String vlmOutput = _richVlmDescription;
   Object? foundationModelsError;
   Object? vlmError;
   Object? analyzeSceneError;
@@ -494,7 +543,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   Future<bool> isSmolVlmReadyForDescribe(
     Uint8List jpegBytes, {
     String systemPrompt =
-        'Describe this image in one concise sentence for a blind user.',
+        'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
   }) async {
     smolReadinessCalls++;
     return smolReadinessPassed;

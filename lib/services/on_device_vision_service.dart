@@ -1132,7 +1132,7 @@ class OnDeviceVisionService {
   Future<bool> isSmolVlmReadyForDescribe(
     Uint8List jpegBytes, {
     String systemPrompt =
-        'Describe this image in one concise sentence for a blind user.',
+        'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
   }) async {
     final context = await _getSmolVlmReadinessContext();
     final cacheKey = _smolVlmReadinessCacheKey(context);
@@ -1153,7 +1153,7 @@ class OnDeviceVisionService {
   Future<SmolVlmReadinessReport> runSmolVlmReadinessProbe(
     Uint8List jpegBytes, {
     String systemPrompt =
-        'Describe this image in one concise sentence for a blind user.',
+        'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
     Map<String, dynamic>? context,
     String? cacheKey,
   }) async {
@@ -1337,7 +1337,7 @@ class OnDeviceVisionService {
   Future<Map<String, dynamic>> runSmolVlmSelfTest(
     Uint8List jpegBytes, {
     String systemPrompt =
-        'Describe this image in one concise sentence for a blind user.',
+        'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
   }) async {
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(

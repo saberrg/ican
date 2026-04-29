@@ -48,13 +48,13 @@ class ScenePromptBuilder {
   static const String fixedCloudSystemPrompt =
       '$invariantSafetyAndTtsRules '
       'Report in this order: immediate hazards first; spatial layout using clock positions where 12 is straight ahead, 3 is right, 9 is left, and depth is within reach, a few steps, several steps, or far; readable text verbatim when legible; then walkable path, doors, openings, or landmarks ahead. '
-      'Keep the response to 2 or 3 short spoken sentences, under 70 words.';
+      'Use 3 to 5 complete spoken sentences with enough concrete detail for safe movement, under 130 words.';
 
   static const String fixedCloudUserPrompt =
       'What does a blind user need to know right now to move and stay safe? '
       'Describe hazards first, then layout by clock position, readable text, and paths or doors.';
 
-  static const int fixedCloudMaxOutputTokens = 220;
+  static const int fixedCloudMaxOutputTokens = 420;
 
   ScenePromptContract build([
     ScenePromptContext context = const ScenePromptContext(),
@@ -127,15 +127,17 @@ class ScenePromptBuilder {
     return switch (detailLevel) {
       DetailLevel.brief => const _DetailPrompt(
         system:
-            'Keep the response to 1 or 2 short spoken sentences, under 45 words.',
-        user: 'Keep it brief for immediate use.',
-        maxOutputTokens: 160,
+            'Use exactly 3 complete spoken sentences, under 90 words. Include hazards, directly-ahead layout, and readable text or landmarks when present.',
+        user:
+            'Give a detailed but fast 3 sentence description for immediate use.',
+        maxOutputTokens: 280,
       ),
       DetailLevel.detailed => const _DetailPrompt(
         system:
-            'Keep the response to 2 or 3 short spoken sentences, under 85 words.',
-        user: 'Include useful detail without slowing speech.',
-        maxOutputTokens: 260,
+            'Use 4 or 5 complete spoken sentences, under 140 words. Be specific about hazards, clock positions, distance, people, readable text, paths, doors, landmarks, and what is directly within reach.',
+        user:
+            'Include rich practical detail in 4 or 5 complete sentences without adding filler.',
+        maxOutputTokens: 440,
       ),
     };
   }
