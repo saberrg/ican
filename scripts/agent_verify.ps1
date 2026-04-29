@@ -44,8 +44,13 @@ if (-not $SkipPubGet) {
     Invoke-Step "Flutter pub get" { flutter pub get }
 }
 
+$FormatTargets = @("lib", "test")
+if (Test-Path "integration_test") {
+    $FormatTargets += "integration_test"
+}
+
 Invoke-Step "Dart format check" {
-    dart format --output=json --set-exit-if-changed lib test | Out-Null
+    dart format --output=json --set-exit-if-changed @FormatTargets | Out-Null
 }
 
 Invoke-Step "Flutter analyze" {

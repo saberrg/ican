@@ -290,6 +290,12 @@ void initBleEye() {
 
 bool isBleEyeConnected() { return clientConnected; }
 
+uint16_t getBleEyeNegotiatedMtu() { return s_negotiatedMtu; }
+
+uint16_t getBleEyePayloadCap() {
+  return (uint16_t)ican_eye_chunk_math::effectivePayloadBytes(s_negotiatedMtu);
+}
+
 EyeCommandData getLastEyeCommand() {
   EyeCommandData cmd;
   portENTER_CRITICAL(&s_cmdMux);

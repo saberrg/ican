@@ -21,6 +21,14 @@ flutter test --no-pub
 .\scripts\agent_verify.ps1 -SkipPubGet -Firmware
 ```
 
+Before TestFlight upload, generate and complete the stricter Eye report:
+
+```powershell
+.\scripts\eye_release_readiness.ps1 -Firmware -OfflineVision
+```
+
+See `docs/eye_testflight_readiness.md` for the real iPhone + Eye matrix.
+
 ## iOS And Crash Gates
 - Archive/export on the remote Mac before upload.
 - Pull TestFlight crash reports through Xcode Organizer or App Store Connect after every crash report.

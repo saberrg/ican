@@ -9,7 +9,7 @@ import 'package:ican/services/vertex_ai_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  group('SceneDescriptionService offline backend selection', () {
+  group('SceneDescriptionService explicit offline flow', () {
     late _FakeOnDeviceVisionService onDevice;
     late SceneDescriptionService service;
 
@@ -22,101 +22,32 @@ void main() {
       );
     });
 
-    test(
-      'falls back to vision-only when local AI artifacts are unavailable',
-      () async {
-        await service.setMode(VisionMode.offlineOnly);
+    test('uses CoreML/Vision template and never loads SmolVLM', () async {
+      final result = await service.describeOffline(_jpegBytes);
 
-        final chunks = await service
-            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
-            .toList();
-
-        expect(service.lastBackend, VisionBackend.visionOnly);
-        expect(chunks.join(), contains('hallway setting'));
-        expect(onDevice.loadVlmCalls, 0);
-        expect(onDevice.analyzeWithVisionCalls, 1);
-        expect(onDevice.analyzeSceneCalls, 0);
-      },
-    );
+      expect(result.backend, VisionBackend.visionOnly);
+      expect(result.text, contains('hallway setting'));
+      expect(result.text, contains('chair at 12 o\'clock'));
+      expect(onDevice.loadVlmCalls, 0);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
+    });
 
     test(
-      'uses Foundation Models when the device reports availability',
+      'falls back to Apple Vision-only template when spatial pass fails',
       () async {
-        onDevice.foundationModelsAvailable = true;
-        await service.setMode(VisionMode.offlineOnly);
-
-        final chunks = await service
-            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
-            .toList();
-
-        expect(service.lastBackend, VisionBackend.foundationModels);
-        expect(chunks, ['Foundation model description.']);
-        expect(onDevice.loadVlmCalls, 0);
-      },
-    );
-
-    test(
-      'uses SmolVLM2 only when ready model files load successfully',
-      () async {
-        onDevice.modelStatus = ModelStatus.ready;
-        onDevice.loadVlmResult = true;
-        await service.setMode(VisionMode.offlineOnly);
-
-        final chunks = await service
-            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
-            .toList();
-
-        expect(service.lastBackend, VisionBackend.vlm);
-        expect(chunks, ['SmolVLM2 description.']);
-        expect(onDevice.loadVlmCalls, 1);
-      },
-    );
-
-    test(
-      'does not select SmolVLM2 when loading the ready model fails',
-      () async {
-        onDevice.modelStatus = ModelStatus.ready;
-        onDevice.loadVlmResult = false;
-        await service.setMode(VisionMode.offlineOnly);
-
-        final chunks = await service
-            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
-            .toList();
-
-        expect(service.lastBackend, VisionBackend.visionOnly);
-        expect(chunks.join(), contains('hallway setting'));
-        expect(onDevice.loadVlmCalls, 1);
-      },
-    );
-
-    test(
-      'direct SmolVLM2 diagnostic reports missing downloaded model',
-      () async {
-        onDevice.modelStatus = ModelStatus.notDownloaded;
-
-        await expectLater(
-          service
-              .describeWithSmolVLM(_jpegBytes, systemPrompt: 'Describe safely.')
-              .drain<void>(),
-          throwsA(isA<StateError>()),
-        );
-      },
-    );
-
-    test(
-      'direct SmolVLM2 diagnostic reports no tokens without template fallback',
-      () async {
-        onDevice.modelStatus = ModelStatus.loaded;
-        onDevice.vlmProducesOutput = false;
-
-        await expectLater(
-          service
-              .describeWithSmolVLM(_jpegBytes, systemPrompt: 'Describe safely.')
-              .drain<void>(),
-          throwsA(isA<LocalVisionException>()),
+        onDevice.analyzeSceneError = const LocalVisionException(
+          'Local L03',
+          'Core ML failed.',
         );
 
+        final result = await service.describeOffline(_jpegBytes);
+
+        expect(result.backend, VisionBackend.visionOnly);
+        expect(result.text, contains('hallway setting'));
+        expect(onDevice.loadVlmCalls, 0);
         expect(onDevice.analyzeSceneCalls, 1);
+        expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );
   });
@@ -152,8 +83,8 @@ void main() {
       expect(service.lastCloudFailure, isA<CloudVisionException>());
       expect(service.lastBackend, VisionBackend.visionOnly);
       expect(chunks.join(), contains('hallway setting'));
-      expect(onDevice.analyzeWithVisionCalls, 1);
-      expect(onDevice.analyzeSceneCalls, 0);
+      expect(onDevice.analyzeSceneCalls, 1);
+      expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
     test(
@@ -404,6 +335,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   bool nativeReady = false;
   bool appleVisionReady = false;
   bool vlmProducesOutput = true;
+  Object? analyzeSceneError;
   int loadVlmCalls = 0;
   int analyzeWithVisionCalls = 0;
   int analyzeSceneCalls = 0;
@@ -429,6 +361,8 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   @override
   Future<ScenePerceptionResult> analyzeScene(Uint8List jpegBytes) async {
     analyzeSceneCalls++;
+    final failure = analyzeSceneError;
+    if (failure != null) throw failure;
     return const ScenePerceptionResult(
       ocrTexts: ['EXIT'],
       sceneClassification: 'hallway',

@@ -8,6 +8,9 @@ import '../services/device_prefs_service.dart';
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
+  @visibleForTesting
+  static bool disableBleAutoConnectForTesting = false;
+
   @override
   State<SplashScreen> createState() => _SplashScreenState();
 }
@@ -71,7 +74,9 @@ class _SplashScreenState extends State<SplashScreen>
     _subtitleController.forward();
 
     // BLE auto-connect in background (fire-and-forget)
-    _startBleAutoConnect();
+    if (!SplashScreen.disableBleAutoConnectForTesting) {
+      _startBleAutoConnect();
+    }
 
     // Minimum display time for the splash
     await Future.delayed(const Duration(milliseconds: 1500));
@@ -100,7 +105,6 @@ class _SplashScreenState extends State<SplashScreen>
           await DevicePrefsService.instance.getLastDeviceId() ??
           BleService.fallbackEyeDeviceId;
       BleService.instance.connectToEyeByMac(savedEyeMac);
-      BleService.instance.autoConnectToCane();
     } catch (e) {
       debugPrint('[Splash] BLE auto-connect error: $e');
     }

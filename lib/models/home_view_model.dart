@@ -8,9 +8,9 @@ import '../protocol/eye_capture_diagnostics.dart';
 import '../protocol/ble_protocol.dart';
 import '../services/app_log_service.dart';
 import '../services/ble_service.dart';
+import '../services/live_detection_controller.dart';
 import '../services/on_device_vision_service.dart';
 import '../services/scene_description_service.dart';
-import '../services/scene_prompt_builder.dart';
 import '../services/tts_service.dart';
 import '../services/vertex_ai_service.dart';
 import '../services/vision_health_service.dart';
@@ -32,12 +32,13 @@ class DescriptionEntry {
 
 enum _CapturedImageFailure { corrupt, incomplete }
 
-enum _LiveVisionMode { full, basic }
+enum _DescribeFlow { cloud, offline }
 
 class HomeViewModel extends ChangeNotifier {
   final SceneDescriptionService sceneService;
   final SpeechOutput ttsService;
   final SettingsProvider settingsProvider;
+  final LiveDetectionController _liveController;
   final DescribeAttemptTraceStore _traceStore;
   final Duration _processingTimeoutDuration;
 
@@ -45,9 +46,13 @@ class HomeViewModel extends ChangeNotifier {
     required this.sceneService,
     required this.ttsService,
     required this.settingsProvider,
+    LiveDetectionController? liveDetectionController,
     DescribeAttemptTraceStore? traceStore,
     Duration processingTimeout = const Duration(seconds: 60),
-  }) : _traceStore = traceStore ?? DescribeAttemptTraceStore(),
+  }) : _liveController =
+           liveDetectionController ??
+           LiveDetectionController(ttsService: ttsService),
+       _traceStore = traceStore ?? DescribeAttemptTraceStore(),
        _processingTimeoutDuration = processingTimeout {
     _init();
   }
@@ -62,7 +67,7 @@ class HomeViewModel extends ChangeNotifier {
   DateTime? _lastImageTime;
   int _batteryPercent = -1;
   Timer? _processingTimeout;
-  final ScenePromptBuilder _promptBuilder = const ScenePromptBuilder();
+  _DescribeFlow? _pendingDescribeFlow;
 
   StreamSubscription<ObstacleAlert>? _obstacleSub;
   StreamSubscription<Uint8List>? _imageSub;
@@ -78,15 +83,10 @@ class HomeViewModel extends ChangeNotifier {
   String? _lastBleAnnouncementKey;
 
   // ── Live vision mode state ──
-  bool _liveVisionActive = false;
-  bool get liveVisionActive => _liveVisionActive;
+  bool get liveVisionActive => _liveController.active;
   final OnDeviceVisionService _onDeviceVision = OnDeviceVisionService();
   OfflineVisionStatus? _offlineVisionStatus;
   VisionRuntimeStatus? _visionRuntimeStatus;
-  StreamSubscription<Uint8List>? _liveImageSub;
-  final Map<String, DateTime> _liveLastAnnounced = {};
-  bool _liveProcessing = false;
-  _LiveVisionMode _liveMode = _LiveVisionMode.basic;
 
   // ── Public getters ──
   BleConnectionState get caneConnection => BleService.instance.caneState;
@@ -122,11 +122,13 @@ class HomeViewModel extends ChangeNotifier {
       BleService.instance.eyeReadinessStatus.ready &&
       !_isProcessing &&
       !_isPaused &&
-      !_liveVisionActive;
+      !liveVisionActive;
+  bool get canCloudDescribe => canDescribe;
+  bool get canOfflineDescribe => canDescribe;
 
   void _init() {
     _bleListener = () {
-      if (_liveVisionActive &&
+      if (liveVisionActive &&
           BleService.instance.state != BleConnectionState.connected) {
         _stopLiveVisionInternal();
       }
@@ -166,13 +168,14 @@ class HomeViewModel extends ChangeNotifier {
 
     _sceneServiceListener = notifyListeners;
     sceneService.addListener(_sceneServiceListener!);
+    _liveController.addListener(notifyListeners);
 
     _obstacleSub = BleService.instance.obstacleStream.listen((alert) {
       notifyListeners();
     });
 
     _captureSub = BleService.instance.captureStartedStream.listen((_) {
-      if (!_liveVisionActive) {
+      if (!liveVisionActive) {
         _isProcessing = true;
         _waitingForCaptureImage = true;
         _recordDescribeLog('Eye capture start observed.');
@@ -190,7 +193,7 @@ class HomeViewModel extends ChangeNotifier {
     _imageSub = BleService.instance.imageStream.listen((
       Uint8List imageBytes,
     ) async {
-      if (_isPaused || _liveVisionActive) return;
+      if (_isPaused || liveVisionActive) return;
       final now = DateTime.now();
       final fingerprint = _computeFingerprint(imageBytes);
       if (_lastImageFingerprint == fingerprint &&
@@ -201,13 +204,16 @@ class HomeViewModel extends ChangeNotifier {
       _lastImageFingerprint = fingerprint;
       _lastImageTime = now;
       _waitingForCaptureImage = false;
-      await _processImage(imageBytes);
+      await _processImage(
+        imageBytes,
+        flow: _pendingDescribeFlow ?? _DescribeFlow.cloud,
+      );
     });
 
     _eyeDiagnosticSub = BleService.instance.eyeCaptureDiagnosticStream.listen((
       diagnostic,
     ) {
-      if (_liveVisionActive) return;
+      if (liveVisionActive) return;
       _handleEyeCaptureDiagnostic(diagnostic);
     });
 
@@ -312,148 +318,12 @@ class HomeViewModel extends ChangeNotifier {
 
   // ── Live Vision Mode ──
 
-  Future<void> startLiveVision() async {
-    if (_liveVisionActive || !isEyeConnected) return;
-    final status = await _onDeviceVision.getOfflineVisionStatus();
-    _offlineVisionStatus = status;
-    _liveMode = status.objectDetectionAvailable
-        ? _LiveVisionMode.full
-        : _LiveVisionMode.basic;
-    _liveVisionActive = true;
-    _liveLastAnnounced.clear();
-    notifyListeners();
+  Future<void> startLiveVision() => _liveController.start();
 
-    await BleService.instance.setEyeProfile(0);
-    await BleService.instance.startLiveCapture(intervalMs: 1500);
-
-    _liveImageSub = BleService.instance.imageStream.listen((
-      Uint8List imageBytes,
-    ) async {
-      if (!_liveVisionActive || _liveProcessing) return;
-      _liveProcessing = true;
-      try {
-        await _processLiveFrame(imageBytes);
-      } catch (e) {
-        debugPrint('[HomeViewModel] Live frame error: $e');
-      }
-      _liveProcessing = false;
-    });
-
-    try {
-      await ttsService.speak(
-        _liveMode == _LiveVisionMode.full
-            ? 'Full live detection started.'
-            : 'Basic live mode started. Object detection is degraded.',
-      );
-    } catch (_) {}
-  }
-
-  Future<void> stopLiveVision() async {
-    if (!_liveVisionActive) return;
-    _stopLiveVisionInternal();
-    try {
-      await ttsService.speak('Live vision stopped.');
-    } catch (_) {}
-  }
+  Future<void> stopLiveVision() => _liveController.stop();
 
   void _stopLiveVisionInternal() {
-    _liveVisionActive = false;
-    _liveProcessing = false;
-    _liveImageSub?.cancel();
-    _liveImageSub = null;
-    _liveLastAnnounced.clear();
-    BleService.instance.stopLiveCapture();
-    BleService.instance.setEyeProfile(1);
-    notifyListeners();
-  }
-
-  Future<void> _processLiveFrame(Uint8List imageBytes) async {
-    if (imageBytes.length < 2 ||
-        imageBytes[0] != 0xFF ||
-        imageBytes[1] != 0xD8) {
-      return;
-    }
-
-    final result = await _onDeviceVision.analyzeScene(imageBytes);
-    if (!_liveVisionActive) return;
-
-    if (_liveMode == _LiveVisionMode.basic) {
-      await _processBasicLiveFrame(result);
-      return;
-    }
-
-    final filtered =
-        result.detectedObjects.where((o) => o.confidence >= 0.5).toList()
-          ..sort((a, b) => b.confidence.compareTo(a.confidence));
-
-    if (filtered.isEmpty) return;
-
-    final now = DateTime.now();
-    final toAnnounce = <String>[];
-    final verbosity = settingsProvider.liveDetectionVerbosity;
-    final maxObjects = verbosity == LiveDetectionVerbosity.full ? 3 : 1;
-
-    for (final det in filtered.take(maxObjects)) {
-      final lastTime = _liveLastAnnounced[det.label];
-      if (lastTime != null &&
-          now.difference(lastTime) < const Duration(seconds: 3)) {
-        continue;
-      }
-      _liveLastAnnounced[det.label] = now;
-      final position = _positionFromCenterX(det.centerX);
-      switch (verbosity) {
-        case LiveDetectionVerbosity.minimal:
-          toAnnounce.add(det.label);
-        case LiveDetectionVerbosity.positional:
-        case LiveDetectionVerbosity.full:
-          toAnnounce.add('${det.label} $position');
-      }
-    }
-
-    if (toAnnounce.isNotEmpty && _liveVisionActive) {
-      try {
-        await ttsService.speak(toAnnounce.join(', '));
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _processBasicLiveFrame(ScenePerceptionResult result) async {
-    final now = DateTime.now();
-    final cues = <String>[];
-
-    if (result.personCount > 0) {
-      final people = result.personCount == 1
-          ? '1 person detected'
-          : '${result.personCount} people detected';
-      cues.add(people);
-    }
-
-    if (result.ocrTexts.isNotEmpty) {
-      cues.add('Text reads ${result.ocrTexts.take(2).join(', ')}');
-    }
-
-    if (result.sceneClassification != 'unknown' &&
-        result.sceneConfidence > 0.25) {
-      cues.add('${result.sceneClassification.replaceAll('_', ' ')} setting');
-    }
-
-    if (cues.isEmpty) return;
-    final key = cues.join('|');
-    final lastTime = _liveLastAnnounced[key];
-    if (lastTime != null &&
-        now.difference(lastTime) < const Duration(seconds: 4)) {
-      return;
-    }
-    _liveLastAnnounced[key] = now;
-    try {
-      await ttsService.speak('Basic live mode: ${cues.join(', ')}.');
-    } catch (_) {}
-  }
-
-  static String _positionFromCenterX(double cx) {
-    if (cx < 0.33) return 'on your left';
-    if (cx < 0.66) return 'ahead';
-    return 'on your right';
+    unawaited(_liveController.stop(speak: false));
   }
 
   // ── Public methods ──
@@ -474,7 +344,13 @@ class HomeViewModel extends ChangeNotifier {
     }
   }
 
-  Future<String> describeNow() {
+  Future<String> describeNow() => describeCloudNow();
+
+  Future<String> describeCloudNow() => _describeNow(_DescribeFlow.cloud);
+
+  Future<String> describeOfflineNow() => _describeNow(_DescribeFlow.offline);
+
+  Future<String> _describeNow(_DescribeFlow flow) {
     final readiness = BleService.instance.eyeReadinessStatus;
     if (!canDescribe) {
       const message =
@@ -482,7 +358,7 @@ class HomeViewModel extends ChangeNotifier {
       _setLastDiagnostic(message);
       _recordDescribeLog(
         'Describe rejected. eyeConnected=$isEyeConnected '
-        'processing=$_isProcessing paused=$_isPaused live=$_liveVisionActive '
+        'processing=$_isProcessing paused=$_isPaused live=$liveVisionActive '
         'readiness=${readiness.phase.name} ready=${readiness.ready} '
         'requiredChars=${readiness.requiredCharacteristicsReady}',
       );
@@ -492,6 +368,7 @@ class HomeViewModel extends ChangeNotifier {
       return _describeNowCompleter!.future;
     }
     _describeNowCompleter = Completer<String>();
+    _pendingDescribeFlow = flow;
     _isProcessing = true;
     _waitingForCaptureImage = true;
     notifyListeners();
@@ -505,8 +382,7 @@ class HomeViewModel extends ChangeNotifier {
       'Describe requested. readiness=${readiness.phase.name} '
       'ready=${readiness.ready} '
       'requiredChars=${readiness.requiredCharacteristicsReady} '
-      'visionMode=${sceneService.mode.name} '
-      'detail=${settingsProvider.detailLevel.name}',
+      'flow=${flow.name}',
     );
     _startProcessingTimeout(cameraTransfer: true);
     unawaited(
@@ -538,8 +414,14 @@ class HomeViewModel extends ChangeNotifier {
 
   // ── Image processing ──
   @visibleForTesting
-  Future<void> processImageForTesting(Uint8List imageBytes) {
-    return _processImage(imageBytes);
+  Future<void> processImageForTesting(
+    Uint8List imageBytes, {
+    bool offline = false,
+  }) {
+    return _processImage(
+      imageBytes,
+      flow: offline ? _DescribeFlow.offline : _DescribeFlow.cloud,
+    );
   }
 
   @visibleForTesting
@@ -549,7 +431,10 @@ class HomeViewModel extends ChangeNotifier {
     _startProcessingTimeout(cameraTransfer: true);
   }
 
-  Future<void> _processImage(Uint8List imageBytes) async {
+  Future<void> _processImage(
+    Uint8List imageBytes, {
+    required _DescribeFlow flow,
+  }) async {
     _waitingForCaptureImage = false;
     await _updateDescribeTrace(
       DescribePipelineStage.jpegValidation,
@@ -580,25 +465,12 @@ class HomeViewModel extends ChangeNotifier {
           lastError: 'Image enhancement failed; using original JPEG.',
         );
       }
-      final fullTextBuffer = StringBuffer();
-      final prompt = _promptBuilder.build(
-        detailLevel: settingsProvider.detailLevel,
-        promptProfile: settingsProvider.promptProfile,
-      );
-
       await _updateDescribeTrace(DescribePipelineStage.cloudRequest);
-      await for (final chunk in sceneService.describeScene(
-        enhancedBytes,
-        systemPrompt: prompt.systemPrompt,
-        userPrompt: prompt.userPrompt,
-        maxOutputTokens: prompt.maxOutputTokens,
-        onStatusUpdate: (_, __) {},
-      )) {
-        if (_isPaused) continue;
-        fullTextBuffer.write(chunk);
-      }
+      final result = flow == _DescribeFlow.cloud
+          ? await sceneService.describeCloud(enhancedBytes)
+          : await sceneService.describeOffline(enhancedBytes);
 
-      final fullText = fullTextBuffer.toString().trim();
+      final fullText = _isPaused ? '' : result.text.trim();
       if (fullText.isNotEmpty) {
         if (!_isPaused) {
           await _updateDescribeTrace(DescribePipelineStage.speech);
@@ -633,6 +505,7 @@ class HomeViewModel extends ChangeNotifier {
     } finally {
       _isProcessing = false;
       _waitingForCaptureImage = false;
+      _pendingDescribeFlow = null;
       _processingTimeout?.cancel();
       if (_describeNowCompleter != null &&
           !_describeNowCompleter!.isCompleted) {
@@ -860,7 +733,7 @@ class HomeViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (_liveVisionActive) {
+    if (liveVisionActive) {
       _stopLiveVisionInternal();
     }
     _disposed = true;
@@ -868,7 +741,6 @@ class HomeViewModel extends ChangeNotifier {
     _imageSub?.cancel();
     _eyeDiagnosticSub?.cancel();
     _connectionEventSub?.cancel();
-    _liveImageSub?.cancel();
     _captureSub?.cancel();
     _telemetrySub?.cancel();
     _processingTimeout?.cancel();
@@ -878,6 +750,8 @@ class HomeViewModel extends ChangeNotifier {
     if (_sceneServiceListener != null) {
       sceneService.removeListener(_sceneServiceListener!);
     }
+    _liveController.removeListener(notifyListeners);
+    _liveController.dispose();
     _completeDescribeNow('Home closed before scene description completed.');
     super.dispose();
   }

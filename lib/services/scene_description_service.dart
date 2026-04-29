@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_log_service.dart';
 import 'connectivity_service.dart';
 import 'on_device_vision_service.dart';
+import 'scene_prompt_builder.dart';
 import 'vertex_ai_service.dart';
 
 /// User-selectable vision processing mode.
@@ -28,6 +29,18 @@ enum VisionBackend {
   foundationModels, // Apple Foundation Models (iOS 26+)
   vlm, // SmolVLM2-500M via llama.cpp mtmd
   visionOnly, // Layer 1 template only
+}
+
+class SceneDescriptionResult {
+  const SceneDescriptionResult({
+    required this.text,
+    required this.backend,
+    required this.completionMetadata,
+  });
+
+  final String text;
+  final VisionBackend backend;
+  final SceneCompletionMetadata completionMetadata;
 }
 
 enum SceneDescriptionFailureStage { cloudVision, localVision }
@@ -166,73 +179,98 @@ class SceneDescriptionService extends ChangeNotifier {
     int maxOutputTokens = 500,
     void Function(String status, VisionBackend backend)? onStatusUpdate,
   }) async* {
+    final result = switch (_mode) {
+      VisionMode.cloudOnly => await describeCloud(imageBytes),
+      VisionMode.offlineOnly => await describeOffline(imageBytes),
+      VisionMode.auto => await _describeAutoForCompatibility(imageBytes),
+    };
+    onStatusUpdate?.call(
+      'Analyzed with ${result.backend.name}.',
+      result.backend,
+    );
+    yield result.text;
+  }
+
+  Future<SceneDescriptionResult> describeCloud(Uint8List imageBytes) async {
     _lastCloudFailure = null;
-
-    switch (_mode) {
-      case VisionMode.cloudOnly:
-        _lastBackend = VisionBackend.cloud;
-        debugPrint('[SceneDescription] Using backend: cloud');
-        onStatusUpdate?.call(
-          'Analyzing with ${cloudService.model.label}...',
-          VisionBackend.cloud,
-        );
-        yield* _describeWithCloud(
-          imageBytes,
-          systemPrompt: systemPrompt,
-          userPrompt: userPrompt,
-          maxOutputTokens: maxOutputTokens,
-        );
-
-      case VisionMode.offlineOnly:
-        yield* _describeWithBestLocal(
-          imageBytes,
-          systemPrompt: systemPrompt,
-          onStatusUpdate: onStatusUpdate,
-        );
-
-      case VisionMode.auto:
-        final online = await _connectivity.hasInternet();
-        if (online) {
-          _lastBackend = VisionBackend.cloud;
-          debugPrint('[SceneDescription] Using backend: cloud');
-          onStatusUpdate?.call(
-            'Analyzing with ${cloudService.model.label}...',
-            VisionBackend.cloud,
-          );
-          try {
-            await for (final chunk in _describeWithCloud(
-              imageBytes,
-              systemPrompt: systemPrompt,
-              userPrompt: userPrompt,
-              maxOutputTokens: maxOutputTokens,
-            )) {
-              yield chunk;
-            }
-            return;
-          } catch (e) {
-            _lastCloudFailure = _asCloudFailure(e);
-            debugPrint('[SceneDescription] Cloud failed: $_lastCloudFailure');
-          }
-        }
-
-        final localReady = await _basicLocalVisionReady();
-        if (!localReady) {
-          throw SceneDescriptionException.localVision(
-            const LocalVisionException(
-              'Local L02',
-              'Local vision is unavailable until Apple Vision passes health checks.',
-            ),
-            cloudFailure: _lastCloudFailure,
-          );
-        }
-
-        yield* _describeWithBestLocal(
-          imageBytes,
-          systemPrompt: systemPrompt,
-          onStatusUpdate: onStatusUpdate,
-          cloudFailure: _lastCloudFailure,
-        );
+    _lastBackend = VisionBackend.cloud;
+    await cloudService.setModel(AiModel.flash);
+    debugPrint('[SceneDescription] Using explicit backend: cloud');
+    try {
+      final prompt = const ScenePromptBuilder().build();
+      final chunks = await _describeWithCloud(
+        imageBytes,
+        systemPrompt: prompt.systemPrompt,
+        userPrompt: prompt.userPrompt,
+        maxOutputTokens: prompt.maxOutputTokens,
+      ).toList();
+      return SceneDescriptionResult(
+        text: chunks.join().trim(),
+        backend: VisionBackend.cloud,
+        completionMetadata: _lastCompletionMetadata,
+      );
+    } on CloudVisionException catch (e) {
+      _lastCloudFailure = e;
+      rethrow;
+    } catch (e) {
+      final cloudFailure = _asCloudFailure(e);
+      _lastCloudFailure = cloudFailure;
+      if (cloudFailure is CloudVisionException) throw cloudFailure;
+      throw SceneDescriptionException.cloudVision(cloudFailure);
     }
+  }
+
+  Future<SceneDescriptionResult> describeOffline(Uint8List imageBytes) async {
+    _lastBackend = VisionBackend.visionOnly;
+    _lastCompletionMetadata = SceneCompletionMetadata.complete;
+    debugPrint('[SceneDescription] Using explicit backend: offline template');
+    try {
+      final analysis = await onDeviceService.analyzeScene(imageBytes);
+      return SceneDescriptionResult(
+        text: analysis.toTemplateDescription(),
+        backend: VisionBackend.visionOnly,
+        completionMetadata: SceneCompletionMetadata.complete,
+      );
+    } catch (firstError) {
+      debugPrint(
+        '[SceneDescription] Full offline perception failed; trying Apple Vision only: $firstError',
+      );
+      try {
+        final vision = await onDeviceService.analyzeWithVision(imageBytes);
+        return SceneDescriptionResult(
+          text: vision.toTemplateDescription(),
+          backend: VisionBackend.visionOnly,
+          completionMetadata: SceneCompletionMetadata.complete,
+        );
+      } catch (e) {
+        throw SceneDescriptionException.localVision(e);
+      }
+    }
+  }
+
+  Future<SceneDescriptionResult> _describeAutoForCompatibility(
+    Uint8List imageBytes,
+  ) async {
+    final online = await _connectivity.hasInternet();
+    if (online) {
+      try {
+        return await describeCloud(imageBytes);
+      } catch (e) {
+        _lastCloudFailure = _asCloudFailure(e);
+        debugPrint('[SceneDescription] Cloud failed: $_lastCloudFailure');
+      }
+    }
+    final localReady = await _basicLocalVisionReady();
+    if (!localReady) {
+      throw SceneDescriptionException.localVision(
+        const LocalVisionException(
+          'Local L02',
+          'Local vision is unavailable until Apple Vision passes health checks.',
+        ),
+        cloudFailure: _lastCloudFailure,
+      );
+    }
+    return describeOffline(imageBytes);
   }
 
   static const Duration _localHealthCheckTimeout = Duration(seconds: 5);
@@ -321,91 +359,6 @@ class SceneDescriptionService extends ChangeNotifier {
 
   Stream<String> describeWithVisionTemplate(Uint8List imageBytes) {
     return _describeWithVisionOnly(imageBytes);
-  }
-
-  Future<VisionBackend> _bestOfflineBackend() async {
-    final fmAvailable = await onDeviceService.isFoundationModelsAvailable();
-    if (fmAvailable) return VisionBackend.foundationModels;
-
-    final status = await onDeviceService.getModelStatus();
-    if (status == ModelStatus.loaded) return VisionBackend.vlm;
-    if (status == ModelStatus.ready) {
-      final loaded = await onDeviceService.loadVlmModel();
-      if (loaded) return VisionBackend.vlm;
-    }
-
-    return VisionBackend.visionOnly;
-  }
-
-  Stream<String> _describeWithBestLocal(
-    Uint8List imageBytes, {
-    required String systemPrompt,
-    required void Function(String status, VisionBackend backend)?
-    onStatusUpdate,
-    Object? cloudFailure,
-  }) async* {
-    try {
-      final backend = await _bestOfflineBackend();
-      _lastBackend = backend;
-      debugPrint('[SceneDescription] Using backend: ${backend.name}');
-      _sendStatusUpdate(backend, onStatusUpdate);
-      yield* _describeWithBackend(
-        backend,
-        imageBytes,
-        systemPrompt: systemPrompt,
-      );
-    } catch (e) {
-      debugPrint('[SceneDescription] Local vision failed: $e');
-      throw SceneDescriptionException.localVision(
-        e,
-        cloudFailure: cloudFailure,
-      );
-    }
-  }
-
-  void _sendStatusUpdate(
-    VisionBackend backend,
-    void Function(String status, VisionBackend backend)? onStatusUpdate,
-  ) {
-    switch (backend) {
-      case VisionBackend.cloud:
-        onStatusUpdate?.call(
-          'Analyzing with ${cloudService.model.label}...',
-          backend,
-        );
-      case VisionBackend.foundationModels:
-        onStatusUpdate?.call('Analyzing on-device...', backend);
-      case VisionBackend.vlm:
-        onStatusUpdate?.call('Analyzing offline with AI model...', backend);
-      case VisionBackend.visionOnly:
-        onStatusUpdate?.call('Reading scene...', backend);
-    }
-  }
-
-  Stream<String> _describeWithBackend(
-    VisionBackend backend,
-    Uint8List imageBytes, {
-    required String systemPrompt,
-  }) {
-    switch (backend) {
-      case VisionBackend.cloud:
-        return _describeWithCloud(
-          imageBytes,
-          systemPrompt: systemPrompt,
-          userPrompt:
-              'What does a blind user need to know right now to move and stay safe? Speak it in one breath.',
-          maxOutputTokens: 500,
-        );
-      case VisionBackend.foundationModels:
-        return _describeWithFoundationModels(
-          imageBytes,
-          systemPrompt: systemPrompt,
-        );
-      case VisionBackend.vlm:
-        return _describeWithVlm(imageBytes, systemPrompt: systemPrompt);
-      case VisionBackend.visionOnly:
-        return _describeWithVisionOnly(imageBytes);
-    }
   }
 
   Object _asCloudFailure(Object error) {

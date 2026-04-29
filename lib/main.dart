@@ -13,8 +13,17 @@ import 'services/stt_service.dart';
 import 'services/tts_service.dart';
 import 'services/voice_command_service.dart';
 
-late final VoiceCommandService voiceCommandService;
-late final SettingsProvider appSettingsProvider;
+late VoiceCommandService voiceCommandService;
+late SettingsProvider appSettingsProvider;
+
+@visibleForTesting
+void configureAppForTesting({
+  required VoiceCommandService voiceCommands,
+  required SettingsProvider settings,
+}) {
+  voiceCommandService = voiceCommands;
+  appSettingsProvider = settings;
+}
 
 Future<void> main() async {
   await runZonedGuarded<Future<void>>(
@@ -89,7 +98,7 @@ class ICanApp extends StatelessWidget {
     return ScreenUtilInit(
       designSize: const Size(375, 812),
       minTextAdapt: true,
-      builder: (_, __) => MaterialApp.router(
+      builder: (context, child) => MaterialApp.router(
         title: 'iCan',
         debugShowCheckedModeBanner: false,
         theme: ICanTheme.lightTheme,

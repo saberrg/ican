@@ -87,6 +87,52 @@ class BleConnectionEvent {
   final String? message;
 }
 
+class EyeStatus {
+  const EyeStatus({
+    required this.raw,
+    this.profileIndex,
+    this.profileName,
+    this.mode,
+    this.intervalMs,
+    this.firmwareVersion,
+    this.freePsramBytes,
+    this.negotiatedMtu,
+    this.payloadCap,
+    this.lastError,
+  });
+
+  factory EyeStatus.parse(String message) {
+    final parts = message.split(':');
+    int? intAt(int index) =>
+        parts.length > index ? int.tryParse(parts[index]) : null;
+    String? stringAt(int index) =>
+        parts.length > index && parts[index].isNotEmpty ? parts[index] : null;
+    return EyeStatus(
+      raw: message,
+      profileIndex: intAt(1),
+      profileName: stringAt(2),
+      mode: stringAt(3),
+      intervalMs: intAt(4),
+      firmwareVersion: stringAt(5),
+      freePsramBytes: intAt(6),
+      negotiatedMtu: intAt(7),
+      payloadCap: intAt(8),
+      lastError: stringAt(9),
+    );
+  }
+
+  final String raw;
+  final int? profileIndex;
+  final String? profileName;
+  final String? mode;
+  final int? intervalMs;
+  final String? firmwareVersion;
+  final int? freePsramBytes;
+  final int? negotiatedMtu;
+  final int? payloadCap;
+  final String? lastError;
+}
+
 enum _FlutterScanOwner { eye, cane }
 
 /// Enum for connection error reasons
@@ -135,6 +181,8 @@ class BleService extends ChangeNotifier {
     ready: false,
   );
   BleReadinessStatus get eyeReadinessStatus => _eyeReadinessStatus;
+  EyeStatus? _lastEyeStatus;
+  EyeStatus? get lastEyeStatus => _lastEyeStatus;
 
   BluetoothDevice? _connectedDevice;
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
@@ -1410,6 +1458,7 @@ class BleService extends ChangeNotifier {
     _recordEyeControlMessage(message);
 
     if (message.startsWith(EyeEvents.statusPrefix)) {
+      _lastEyeStatus = EyeStatus.parse(message);
       _markEyeCommandPathReady(message);
     }
 
@@ -1819,11 +1868,17 @@ class BleService extends ChangeNotifier {
 
   /// Start firmware-driven periodic capture at [intervalMs].
   /// The Eye will auto-capture and stream images until [stopLiveCapture] is called.
-  Future<void> startLiveCapture({int intervalMs = 1500}) =>
-      _sendEyeCommand(EyeCommands.liveStart(intervalMs));
+  Future<void> startLiveCapture({int intervalMs = 1500}) {
+    _imageAssembler.beginCaptureCommand();
+    _armImageTransferTimeout();
+    return _sendEyeCommand(EyeCommands.liveStart(intervalMs));
+  }
 
   /// Stop firmware-driven periodic capture.
-  Future<void> stopLiveCapture() => _sendEyeCommand(EyeCommands.liveStop);
+  Future<void> stopLiveCapture() {
+    _cancelImageTransfer(reset: true);
+    return _sendEyeCommand(EyeCommands.liveStop);
+  }
 
   /// Cancel any in-flight image transfer on the Eye and reset the Flutter
   /// assembler. Use when the user leaves the Describe/Live screen mid-transfer

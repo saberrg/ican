@@ -119,7 +119,7 @@ static_assert(sizeof(GpsPacket) == 19, "GpsPacket must be 19 bytes");
 // Events (Eye → App, notified on same characteristic):
 //   "BUTTON:DOUBLE"         — physical button double-press detected
 //   "CAPTURE:START"         - capture accepted and camera capture starting
-//   "STATUS:{idx}:{name}:{IDLE|LIVE}:{ms}:{firmware}" - status response
+//   "STATUS:{idx}:{name}:{IDLE|LIVE}:{ms}:{firmware}:{freePsram}:{mtu}:{payloadCap}:{lastError}" - status response
 //   "SIZE:{bytes}", "CRC:{hex}", "END:{chunks}" - image transfer control
 //   "ERR:{code}"            — command error
 

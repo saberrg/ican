@@ -66,6 +66,10 @@ EyeCommandData getLastEyeCommand();
  */
 void sendControlMessage(const char *msg);
 
+uint16_t getBleEyeNegotiatedMtu();
+
+uint16_t getBleEyePayloadCap();
+
 /**
  * Send a single image data chunk to the connected client.
  * Packs a 2-byte sequence number header and payload per ble_protocol.h.

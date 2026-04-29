@@ -241,10 +241,12 @@ void loop() {
                   getCurrentProfile(), profiles[getCurrentProfile()].name,
                   liveMode ? "ON" : "OFF");
     {
-      char msg[96];
-      snprintf(msg, sizeof(msg), "STATUS:%d:%s:%s:%d:%s", getCurrentProfile(),
+      char msg[160];
+      snprintf(msg, sizeof(msg), "STATUS:%d:%s:%s:%d:%s:%u:%u:%u:%s",
+               getCurrentProfile(),
                profiles[getCurrentProfile()].name, liveMode ? "LIVE" : "IDLE",
-               liveIntervalMs, ICAN_EYE_FIRMWARE_VERSION);
+               liveIntervalMs, ICAN_EYE_FIRMWARE_VERSION, ESP.getFreePsram(),
+               getBleEyeNegotiatedMtu(), getBleEyePayloadCap(), "none");
       sendControlMessage(msg);
     }
     break;

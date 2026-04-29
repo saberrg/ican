@@ -295,6 +295,30 @@ class _FakeSceneDescriptionService extends SceneDescriptionService {
   int describeCalls = 0;
 
   @override
+  Future<SceneDescriptionResult> describeCloud(Uint8List imageBytes) async {
+    describeCalls++;
+    final failure = error;
+    if (failure != null) throw failure;
+    return const SceneDescriptionResult(
+      text: 'A hallway is clear.',
+      backend: VisionBackend.cloud,
+      completionMetadata: SceneCompletionMetadata.complete,
+    );
+  }
+
+  @override
+  Future<SceneDescriptionResult> describeOffline(Uint8List imageBytes) async {
+    describeCalls++;
+    final failure = error;
+    if (failure != null) throw failure;
+    return const SceneDescriptionResult(
+      text: 'A hallway is clear.',
+      backend: VisionBackend.visionOnly,
+      completionMetadata: SceneCompletionMetadata.complete,
+    );
+  }
+
+  @override
   Stream<String> describeScene(
     Uint8List imageBytes, {
     required String systemPrompt,

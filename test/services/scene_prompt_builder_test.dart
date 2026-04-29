@@ -1,44 +1,31 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ican/models/settings_provider.dart';
 import 'package:ican/services/scene_prompt_builder.dart';
 
 void main() {
   group('ScenePromptBuilder', () {
     const builder = ScenePromptBuilder();
 
-    test('single opinionated contract ignores detail/profile inputs', () {
-      final brief = builder.build(
-        detailLevel: DetailLevel.brief,
-        promptProfile: PromptProfile.balanced,
-      );
-      final detailed = builder.build(
-        detailLevel: DetailLevel.detailed,
-        promptProfile: PromptProfile.reading,
-      );
+    test('builds one fixed cloud prompt contract', () {
+      final first = builder.build();
+      final second = builder.build();
 
-      expect(brief.systemPrompt, detailed.systemPrompt);
-      expect(brief.userPrompt, detailed.userPrompt);
-      expect(brief.maxOutputTokens, detailed.maxOutputTokens);
+      expect(first.systemPrompt, second.systemPrompt);
+      expect(first.userPrompt, second.userPrompt);
+      expect(first.maxOutputTokens, second.maxOutputTokens);
+      expect(first.systemPrompt, contains('2 or 3 short spoken sentences'));
     });
 
     test('system prompt leads with hazards and uses clock positions', () {
-      final contract = builder.build(
-        detailLevel: DetailLevel.brief,
-        promptProfile: PromptProfile.safety,
-      );
+      final contract = builder.build();
 
       expect(contract.systemPrompt.toLowerCase(), contains('hazard'));
       expect(contract.systemPrompt.toLowerCase(), contains('clock position'));
       expect(contract.systemPrompt.toLowerCase(), contains('verbatim'));
-      expect(contract.systemPrompt.toLowerCase(), contains('one breath'));
       expect(contract.systemPrompt.toLowerCase(), contains('walkable'));
     });
 
     test('system prompt bans meta phrases unsafe for a blind user', () {
-      final contract = builder.build(
-        detailLevel: DetailLevel.brief,
-        promptProfile: PromptProfile.balanced,
-      );
+      final contract = builder.build();
       final lower = contract.systemPrompt.toLowerCase();
 
       for (final banned in <String>[
@@ -61,23 +48,17 @@ void main() {
     });
 
     test('user prompt is a direct safety-first question', () {
-      final contract = builder.build(
-        detailLevel: DetailLevel.brief,
-        promptProfile: PromptProfile.balanced,
-      );
+      final contract = builder.build();
 
       expect(contract.userPrompt.toLowerCase(), contains('blind user'));
       expect(contract.userPrompt.toLowerCase(), contains('safe'));
-      expect(contract.userPrompt.toLowerCase(), contains('one breath'));
+      expect(contract.userPrompt.toLowerCase(), contains('hazards first'));
     });
 
     test('max output tokens stays small for spoken output', () {
-      final contract = builder.build(
-        detailLevel: DetailLevel.brief,
-        promptProfile: PromptProfile.balanced,
-      );
+      final contract = builder.build();
 
-      expect(contract.maxOutputTokens, lessThanOrEqualTo(256));
+      expect(contract.maxOutputTokens, lessThanOrEqualTo(400));
       expect(contract.maxOutputTokens, greaterThan(0));
     });
   });
