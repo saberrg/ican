@@ -17,6 +17,7 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		AA000102000000000A010000 /* OnDeviceVisionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A010000 /* OnDeviceVisionChannel.swift */; };
 		AA000102000000000A011000 /* AudioPlaybackChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A011000 /* AudioPlaybackChannel.swift */; };
+		AA000102000000000A012000 /* LiveXChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A012000 /* LiveXChannel.swift */; };
 		AA000102000000000A020000 /* LlamaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A020000 /* LlamaService.swift */; };
 		AA000102000000000A030000 /* VisionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A030000 /* VisionService.swift */; };
 		AA000102000000000A040000 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A040000 /* ModelDownloadManager.swift */; };
@@ -25,6 +26,7 @@
 		AA000102000000000A080000 /* ObjectDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A080000 /* ObjectDetector.swift */; };
 		AA000102000000000A090000 /* PerceptionLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A090000 /* PerceptionLayer.swift */; };
 		AA000102000000000A0A0000 /* SceneContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A0A0000 /* SceneContext.swift */; };
+		AA000102000000000A0B0000 /* WiFiStreamReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A0B0000 /* WiFiStreamReceiver.swift */; };
 		CC000102000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = CC000101000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage */; };
 		CC000102000000000E001000 /* YOLOv3Tiny.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */; };
 		DD00010200000000F0010000 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD00010100000000F0010000 /* llama.xcframework */; };
@@ -72,6 +74,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA000101000000000A010000 /* OnDeviceVisionChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceVisionChannel.swift; sourceTree = "<group>"; };
 		AA000101000000000A011000 /* AudioPlaybackChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlaybackChannel.swift; sourceTree = "<group>"; };
+		AA000101000000000A012000 /* LiveXChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveXChannel.swift; sourceTree = "<group>"; };
 		AA000101000000000A020000 /* LlamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaService.swift; sourceTree = "<group>"; };
 		AA000101000000000A030000 /* VisionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionService.swift; sourceTree = "<group>"; };
 		AA000101000000000A040000 /* ModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadManager.swift; sourceTree = "<group>"; };
@@ -80,6 +83,7 @@
 		AA000101000000000A080000 /* ObjectDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectDetector.swift; sourceTree = "<group>"; };
 		AA000101000000000A090000 /* PerceptionLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerceptionLayer.swift; sourceTree = "<group>"; };
 		AA000101000000000A0A0000 /* SceneContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneContext.swift; sourceTree = "<group>"; };
+		AA000101000000000A0B0000 /* WiFiStreamReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiStreamReceiver.swift; sourceTree = "<group>"; };
 		CC000101000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlpackage; path = Models/DepthAnythingV2SmallF16P6.mlpackage; sourceTree = "<group>"; };
 		CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = Models/YOLOv3Tiny.mlmodel; sourceTree = "<group>"; };
 		DD00010100000000F0010000 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = llama.xcframework; sourceTree = "<group>"; };
@@ -149,6 +153,7 @@
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				AA000101000000000A010000 /* OnDeviceVisionChannel.swift */,
 				AA000101000000000A011000 /* AudioPlaybackChannel.swift */,
+				AA000101000000000A012000 /* LiveXChannel.swift */,
 				AA000101000000000A020000 /* LlamaService.swift */,
 				AA000101000000000A030000 /* VisionService.swift */,
 				AA000101000000000A040000 /* ModelDownloadManager.swift */,
@@ -166,6 +171,7 @@
 				AA000101000000000A080000 /* ObjectDetector.swift */,
 				AA000101000000000A090000 /* PerceptionLayer.swift */,
 				AA000101000000000A0A0000 /* SceneContext.swift */,
+				AA000101000000000A0B0000 /* WiFiStreamReceiver.swift */,
 				CC000101000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage */,
 				CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */,
 			);
@@ -334,6 +340,7 @@
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				AA000102000000000A010000 /* OnDeviceVisionChannel.swift in Sources */,
 				AA000102000000000A011000 /* AudioPlaybackChannel.swift in Sources */,
+				AA000102000000000A012000 /* LiveXChannel.swift in Sources */,
 				AA000102000000000A020000 /* LlamaService.swift in Sources */,
 				AA000102000000000A030000 /* VisionService.swift in Sources */,
 				AA000102000000000A040000 /* ModelDownloadManager.swift in Sources */,
@@ -342,6 +349,7 @@
 				AA000102000000000A080000 /* ObjectDetector.swift in Sources */,
 				AA000102000000000A090000 /* PerceptionLayer.swift in Sources */,
 				AA000102000000000A0A0000 /* SceneContext.swift in Sources */,
+				AA000102000000000A0B0000 /* WiFiStreamReceiver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
