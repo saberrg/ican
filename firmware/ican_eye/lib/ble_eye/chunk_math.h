@@ -30,11 +30,17 @@ inline size_t effectivePayloadBytes(uint16_t mtu) {
   return capped;
 }
 
-// Pack a sequence number into the first two bytes of a chunk buffer (little
-// endian, matching ImagePacketHeader).
+// Pack a v2 frame/chunk header into the first four bytes of a chunk buffer
+// (little endian, matching ImagePacketHeader).
+inline void packFrameSeqLE(uint8_t *buf, uint16_t frameId, uint16_t seq) {
+  buf[0] = (uint8_t)(frameId & 0xFF);
+  buf[1] = (uint8_t)((frameId >> 8) & 0xFF);
+  buf[2] = (uint8_t)(seq & 0xFF);
+  buf[3] = (uint8_t)((seq >> 8) & 0xFF);
+}
+
 inline void packSeqLE(uint8_t *buf, uint16_t seq) {
-  buf[0] = (uint8_t)(seq & 0xFF);
-  buf[1] = (uint8_t)((seq >> 8) & 0xFF);
+  packFrameSeqLE(buf, 0, seq);
 }
 
 // Backoff schedule for sendNotify retries. `attempt` is zero-based. When
@@ -61,6 +67,17 @@ inline int maxNotifyRetries() { return 40; }
 // wait for the TX buffer to drain even if no congestion was observed. This
 // keeps sustained transfers from walking the queue up to saturation.
 inline int drainGapEveryNChunks() { return 16; }
+
+inline bool appleConnectionParamsAreValid(uint16_t intervalMin,
+                                          uint16_t intervalMax,
+                                          uint16_t latency,
+                                          uint16_t supervisionTimeout) {
+  if (intervalMin < 12 || intervalMax < intervalMin) return false;
+  if (supervisionTimeout < 200 || supervisionTimeout > 600) return false;
+  const uint32_t intervalMaxMsTimes10 = (uint32_t)intervalMax * 125 / 10;
+  return intervalMaxMsTimes10 * (latency + 1) * 3 <
+         (uint32_t)supervisionTimeout * 10;
+}
 
 } // namespace ican_eye_chunk_math
 

@@ -194,6 +194,9 @@ class EyeCommands {
   static String liveStart(int intervalMs) => 'LIVE_START:$intervalMs';
   static String profile(int index) => 'PROFILE:$index';
   static const String status = 'STATUS';
+  static String ackFrame(int frameId) => 'ACK_FRAME:$frameId';
+  static String nackFrame(int frameId, String ranges) =>
+      'NACK_FRAME:$frameId:$ranges';
 }
 
 class EyeProfileIndex {
@@ -221,9 +224,12 @@ class EyeProfileIndex {
 class EyeEvents {
   EyeEvents._();
 
+  static const String buttonSingle = 'BUTTON:SINGLE';
   static const String buttonDouble = 'BUTTON:DOUBLE';
+  static const String buttonLong = 'BUTTON:LONG';
   static const String captureStart = 'CAPTURE:START';
   static const String profileSetPrefix = 'PROFILE_SET:';
+  static const String framePrefix = 'FRAME:';
   static const String sizePrefix = 'SIZE:';
   static const String crcPrefix = 'CRC:';
   static const String endPrefix = 'END:';
@@ -236,6 +242,8 @@ class EyeEvents {
   static const String cameraCaptureFailed = 'CAMERA_CAPTURE_FAILED';
   static const String streamAborted = 'STREAM_ABORTED';
   static const String chunkNotifyFailed = 'CHUNK_NOTIFY_FAILED';
+  static const String frameExpired = 'FRAME_EXPIRED';
+  static const String retransmitUnavailable = 'RETRANSMIT_UNAVAILABLE';
 
   /// Firmware appends this reason when aborting due to an ABORT command.
   static const String abortReasonUser = 'user';
@@ -246,7 +254,7 @@ class EyeEvents {
 // ===========================================================================
 
 class ImagePacketHeader {
-  const ImagePacketHeader({required this.sequenceNumber});
+  const ImagePacketHeader({this.frameId, required this.sequenceNumber});
 
   factory ImagePacketHeader.fromBytes(Uint8List data) {
     if (data.length < headerSize) {
@@ -256,13 +264,28 @@ class ImagePacketHeader {
     return ImagePacketHeader(sequenceNumber: bd.getUint16(0, Endian.little));
   }
 
+  factory ImagePacketHeader.v2FromBytes(Uint8List data) {
+    if (data.length < v2HeaderSize) {
+      throw ArgumentError(
+        'Image v2 header must be at least $v2HeaderSize bytes',
+      );
+    }
+    final bd = ByteData.sublistView(data);
+    return ImagePacketHeader(
+      frameId: bd.getUint16(0, Endian.little),
+      sequenceNumber: bd.getUint16(2, Endian.little),
+    );
+  }
+
   static const int headerSize = 2;
-  static const int maxPayload = 509;
+  static const int v2HeaderSize = 4;
+  static const int maxPayload = 508;
 
   /// Production firmware clamps each notify to this cap regardless of MTU.
   /// See `firmware_payload_cap` in `protocol/ble_protocol.yaml` and
   /// `EYE_IMAGE_FIRMWARE_PAYLOAD_CAP` in `firmware/shared/include/ble_protocol.h`.
   static const int firmwarePayloadCap = 240;
 
+  final int? frameId;
   final int sequenceNumber;
 }

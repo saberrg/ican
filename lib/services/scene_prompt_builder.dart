@@ -2,20 +2,17 @@ import '../models/settings_provider.dart';
 
 class ScenePromptContext {
   const ScenePromptContext({
-    this.profile = PromptProfile.safety,
-    this.detailLevel = DetailLevel.brief,
-    this.hazardSensitivity = HazardSensitivity.medium,
+    this.detailLevel = DetailLevel.detailed,
+    this.hazardSensitivity = HazardSensitivity.high,
   });
 
   factory ScenePromptContext.fromSettings(SettingsProvider settings) {
     return ScenePromptContext(
-      profile: settings.promptProfile,
       detailLevel: settings.detailLevel,
       hazardSensitivity: settings.hazardSensitivity,
     );
   }
 
-  final PromptProfile profile;
   final DetailLevel detailLevel;
   final HazardSensitivity hazardSensitivity;
 }
@@ -47,69 +44,37 @@ class ScenePromptBuilder {
 
   static const String fixedCloudSystemPrompt =
       '$invariantSafetyAndTtsRules '
-      'Report in this order: immediate hazards first; spatial layout using clock positions where 12 is straight ahead, 3 is right, 9 is left, and depth is within reach, a few steps, several steps, or far; readable text verbatim when legible; then walkable path, doors, openings, or landmarks ahead. '
-      'Use 3 to 5 complete spoken sentences with enough concrete detail for safe movement, under 130 words.';
+      'DRAW THE SCENE FOR THE USER!! '
+      'Dynamic routing instructions: Automatically prioritize immediate hazards first. If prominent text is visible, read it verbatim. Otherwise, describe the general layout in rich detail. '
+      'You MUST use exact spatial clock-positions for all objects (e.g., "Tree at 1 o\'clock", "Car at 10 o\'clock"). '
+      'Paint a practical mental map with concrete phrases. '
+      'Use 4 to 6 complete spoken sentences with extreme verbosity and concrete detail for safe movement, under 170 words.';
 
   static const String fixedCloudUserPrompt =
       'What does a blind user need to know right now to move and stay safe? '
-      'Describe hazards first, then layout by clock position, readable text, and paths or doors.';
+      'DRAW THE SCENE FOR THE USER!! Describe hazards first, then use mandatory clock positions for layout, read prominent text verbatim, and describe paths or doors.';
 
   static const int fixedCloudMaxOutputTokens = 420;
 
   ScenePromptContract build([
     ScenePromptContext context = const ScenePromptContext(),
   ]) {
-    final profileInstructions = _profileInstructions(context.profile);
     final detailInstructions = _detailInstructions(context.detailLevel);
     final hazardInstructions = _hazardInstructions(context.hazardSensitivity);
     return ScenePromptContract(
       systemPrompt: [
         invariantSafetyAndTtsRules,
-        profileInstructions.system,
+        'Report hazards, layout, readable text verbatim, and landmarks. Use clock positions.',
         hazardInstructions,
         detailInstructions.system,
       ].join(' '),
       userPrompt: [
         'For a blind user moving right now, answer with only useful spoken scene information.',
-        'Put hazards first when hazards are present.',
-        profileInstructions.user,
+        'Put hazards first when hazards are present. Describe layout, text, and paths.',
         detailInstructions.user,
       ].join(' '),
       maxOutputTokens: detailInstructions.maxOutputTokens,
     );
-  }
-
-  _ProfilePrompt _profileInstructions(PromptProfile profile) {
-    switch (profile) {
-      case PromptProfile.safety:
-        return const _ProfilePrompt(
-          system:
-              'Safety profile: report hazards, movement, within-reach obstacles, drop-offs, crossings, vehicles, approaching people, and the safest visible path first. Keep non-safety context short.',
-          user:
-              'Give the safety-first description: hazards, movement, within-reach obstacles, and the safe path before anything else.',
-        );
-      case PromptProfile.reading:
-        return const _ProfilePrompt(
-          system:
-              'Reading profile: read visible text verbatim first, including signs, labels, screens, buttons, doors, and documents. Then add immediate safety hazards and brief spatial context.',
-          user:
-              'Read visible text verbatim first, then add safety and spatial context needed right now.',
-        );
-      case PromptProfile.navigation:
-        return const _ProfilePrompt(
-          system:
-              'Navigation profile: report clear walking space, doors, openings, signs, landmarks, obstacles, and left-right-ahead orientation. Mention hazards immediately if present.',
-          user:
-              'Describe paths, doors, signs, landmarks, and obstacles using clock positions.',
-        );
-      case PromptProfile.balanced:
-        return const _ProfilePrompt(
-          system:
-              'Balanced profile: report hazards if present, what is directly ahead, spatial layout, readable text verbatim, and landmarks or doors. Use clock positions where useful.',
-          user:
-              'Describe hazards if present, ahead/layout, readable text, and landmarks or doors.',
-        );
-    }
   }
 
   String _hazardInstructions(HazardSensitivity sensitivity) {
@@ -127,27 +92,20 @@ class ScenePromptBuilder {
     return switch (detailLevel) {
       DetailLevel.brief => const _DetailPrompt(
         system:
-            'Use exactly 3 complete spoken sentences, under 90 words. Include hazards, directly-ahead layout, and readable text or landmarks when present.',
+            'DRAW THE SCENE FOR THE USER!! Automatically prioritize hazards if present. Use exactly 3 complete spoken sentences, under 90 words. You MUST use exact spatial clock-positions (e.g., "Obstacle at 2 o\'clock"). Read prominent text verbatim. Otherwise, describe the general layout.',
         user:
-            'Give a detailed but fast 3 sentence description for immediate use.',
+            'Give a detailed but fast 3 sentence description for immediate use. Prioritize hazards, use clock positions, and read prominent text.',
         maxOutputTokens: 280,
       ),
       DetailLevel.detailed => const _DetailPrompt(
         system:
-            'Use 4 or 5 complete spoken sentences, under 140 words. Be specific about hazards, clock positions, distance, people, readable text, paths, doors, landmarks, and what is directly within reach.',
+            'DRAW THE SCENE FOR THE USER!! Automatically prioritize hazards if present. Use 4 to 6 complete spoken sentences, under 170 words. You MUST use exact spatial clock-positions for all objects (e.g., "Tree at 1 o\'clock"). Read prominent text verbatim. Otherwise, describe the general layout in rich detail.',
         user:
-            'Include rich practical detail in 4 or 5 complete sentences without adding filler.',
-        maxOutputTokens: 440,
+            'Include rich practical detail in 4 to 6 complete sentences. Prioritize hazards, use mandatory clock positions, and read prominent text verbatim.',
+        maxOutputTokens: 560,
       ),
     };
   }
-}
-
-class _ProfilePrompt {
-  const _ProfilePrompt({required this.system, required this.user});
-
-  final String system;
-  final String user;
 }
 
 class _DetailPrompt {

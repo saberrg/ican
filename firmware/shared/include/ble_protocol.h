@@ -126,8 +126,9 @@ static_assert(sizeof(GpsPacket) == 19, "GpsPacket must be 19 bytes");
 // ===========================================================================
 // Image Stream Packet Header (Eye → App)
 // ===========================================================================
-constexpr uint8_t IMAGE_HEADER_BYTES = 2;
-constexpr uint16_t IMAGE_MAX_PAYLOAD = 509;
+constexpr uint8_t EYE_PROTOCOL_VERSION = 2;
+constexpr uint8_t IMAGE_HEADER_BYTES = 4;
+constexpr uint16_t IMAGE_MAX_PAYLOAD = 508;
 constexpr uint16_t IMAGE_MAX_PACKET_SIZE = 512;
 // Production firmware clamps each notify payload to this value regardless of
 // MTU. Keeps iOS BLE ACL queues from saturating and causing late-stream
@@ -153,9 +154,12 @@ constexpr const char* EYE_CMD_LIVE_START_PREFIX = "LIVE_START:";
 constexpr const char* EYE_CMD_LIVE_STOP_STR = "LIVE_STOP";
 constexpr const char* EYE_CMD_PROFILE_PREFIX = "PROFILE:";
 constexpr const char* EYE_CMD_STATUS_STR = "STATUS";
+constexpr const char* EYE_CMD_ACK_FRAME_PREFIX = "ACK_FRAME:";
+constexpr const char* EYE_CMD_NACK_FRAME_PREFIX = "NACK_FRAME:";
 
 #pragma pack(push, 1)
 struct ImagePacketHeader {
+  uint16_t frame_id;        // little-endian
   uint16_t sequence_number; // little-endian
 };
 #pragma pack(pop)

@@ -24,6 +24,7 @@
 #include <freertos/task.h>
 #include <string>
 #include <cstdio>
+#include <cstdlib>
 #include "ble_protocol.h"
 #include "chunk_math.h"
 
@@ -63,11 +64,51 @@ static volatile uint32_t s_lastStreamBytes = 0;
 static volatile uint32_t s_lastStreamMs = 0;
 static volatile uint16_t s_lastStreamChunks = 0;
 static const char *s_lastStreamResult = "none";
+static uint16_t s_nextFrameId = 1;
 
 static portMUX_TYPE s_cmdMux = portMUX_INITIALIZER_UNLOCKED;
 static EyeCommand pendingCmdType = EYE_CMD_NONE;
 static int pendingCmdProfile = 0;
 static int pendingCmdLiveInterval = 0;
+static uint16_t pendingCmdFrameId = 0;
+static char pendingCmdNackRanges[80] = {0};
+
+static volatile bool s_controlConfirmationPending = false;
+static volatile bool s_controlConfirmationOk = false;
+
+struct CachedFrame {
+  uint16_t frameId = 0;
+  uint8_t *data = nullptr;
+  size_t len = 0;
+  uint32_t crc = 0;
+  uint16_t chunks = 0;
+  size_t payloadBytes = 0;
+  unsigned long expiresAtMs = 0;
+};
+
+static CachedFrame s_cachedFrame;
+
+static void clearCachedFrame() {
+  if (s_cachedFrame.data != nullptr) {
+    free(s_cachedFrame.data);
+  }
+  s_cachedFrame = CachedFrame();
+}
+
+static uint16_t allocateFrameId() {
+  uint16_t id = s_nextFrameId++;
+  if (s_nextFrameId == 0) s_nextFrameId = 1;
+  if (id == 0) id = s_nextFrameId++;
+  return id;
+}
+
+static void expireCachedFrameIfNeeded() {
+  if (s_cachedFrame.data != nullptr &&
+      (long)(millis() - s_cachedFrame.expiresAtMs) >= 0) {
+    Serial.printf("[BLE] Cached frame %u expired.\n", s_cachedFrame.frameId);
+    clearCachedFrame();
+  }
+}
 
 // =========================================================================
 // BLE Callbacks
@@ -83,11 +124,9 @@ class EyeServerCallbacks : public BLEServerCallbacks {
     s_negotiatedMtu = 23;  // Reset to safe default; updated by onMtuChanged
     Serial.println("[BLE] Client connected. MTU reset to default.");
 
-    // Request an iOS-friendly interval: 30-50ms, slave latency 0, and an
-    // 8-second supervision timeout (field 4 is in 10ms units, so 800 = 8s).
-    // Looser supervision gives iOS time to recover from transient congestion
-    // instead of tearing down the link during image transfer.
-    pServer->updateConnParams(param->connect.remote_bda, 24, 40, 0, 800);
+    // Request iPhone-friendly params: 30-45ms, latency 0, 6s supervision.
+    // The timeout is in 10ms units.
+    pServer->updateConnParams(param->connect.remote_bda, 24, 36, 0, 600);
 
     // Request LE Data Length Extension so each ACL frame carries more data.
     // Best-effort: iOS may refuse, in which case we stay on the 27-byte
@@ -155,6 +194,15 @@ static void eyeGattsEventHandler(esp_gatts_cb_event_t event,
                     s_congested ? "CONGESTED" : "congestion cleared");
       break;
 
+    case ESP_GATTS_CONF_EVT:
+      s_controlConfirmationPending = false;
+      s_controlConfirmationOk = param->conf.status == ESP_GATT_OK;
+      if (!s_controlConfirmationOk) {
+        Serial.printf("[BLE] Control indication confirm failed: status=0x%02X\n",
+                      param->conf.status);
+      }
+      break;
+
     default:
       break;
   }
@@ -207,8 +255,36 @@ class CaptureCommandCallback : public BLECharacteristicCallbacks {
       portENTER_CRITICAL(&s_cmdMux);
       pendingCmdType = EYE_CMD_STATUS;
       pendingCmdProfile = 0;
+      pendingCmdFrameId = 0;
+      pendingCmdNackRanges[0] = '\0';
       portEXIT_CRITICAL(&s_cmdMux);
       Serial.println("[BLE] STATUS command received");
+    } else if (cmd.startsWith("ACK_FRAME:")) {
+      int frameId = cmd.substring(10).toInt();
+      portENTER_CRITICAL(&s_cmdMux);
+      pendingCmdType = EYE_CMD_ACK_FRAME;
+      pendingCmdProfile = 0;
+      pendingCmdFrameId = (uint16_t)frameId;
+      pendingCmdNackRanges[0] = '\0';
+      portEXIT_CRITICAL(&s_cmdMux);
+      Serial.printf("[BLE] ACK_FRAME command received: %u\n", frameId);
+    } else if (cmd.startsWith("NACK_FRAME:")) {
+      int firstColon = cmd.indexOf(':');
+      int secondColon = cmd.indexOf(':', firstColon + 1);
+      if (secondColon > 0) {
+        int frameId = cmd.substring(firstColon + 1, secondColon).toInt();
+        String ranges = cmd.substring(secondColon + 1);
+        portENTER_CRITICAL(&s_cmdMux);
+        pendingCmdType = EYE_CMD_NACK_FRAME;
+        pendingCmdProfile = 0;
+        pendingCmdFrameId = (uint16_t)frameId;
+        strncpy(pendingCmdNackRanges, ranges.c_str(),
+                sizeof(pendingCmdNackRanges) - 1);
+        pendingCmdNackRanges[sizeof(pendingCmdNackRanges) - 1] = '\0';
+        portEXIT_CRITICAL(&s_cmdMux);
+        Serial.printf("[BLE] NACK_FRAME command received: %u ranges=%s\n",
+                      frameId, ranges.c_str());
+      }
     } else {
       Serial.printf("[BLE] Unknown command: %s\n", cmd.c_str());
       sendControlMessage("ERR:UNKNOWN_COMMAND");
@@ -258,7 +334,8 @@ void initBleEye() {
       CHAR_EYE_CAPTURE_RX_UUID,
       BLECharacteristic::PROPERTY_WRITE |
           BLECharacteristic::PROPERTY_WRITE_NR |
-          BLECharacteristic::PROPERTY_NOTIFY);
+          BLECharacteristic::PROPERTY_NOTIFY |
+          BLECharacteristic::PROPERTY_INDICATE);
   pCaptureChar->setCallbacks(new CaptureCommandCallback());
   pCaptureChar->addDescriptor(new BLE2902());
 
@@ -315,9 +392,14 @@ EyeCommandData getLastEyeCommand() {
   cmd.type = pendingCmdType;
   cmd.profileIndex = pendingCmdProfile;
   cmd.liveIntervalMs = pendingCmdLiveInterval;
+  cmd.frameId = pendingCmdFrameId;
+  strncpy(cmd.nackRanges, pendingCmdNackRanges, sizeof(cmd.nackRanges) - 1);
+  cmd.nackRanges[sizeof(cmd.nackRanges) - 1] = '\0';
   pendingCmdType = EYE_CMD_NONE;
   pendingCmdProfile = 0;
   pendingCmdLiveInterval = 0;
+  pendingCmdFrameId = 0;
+  pendingCmdNackRanges[0] = '\0';
   portEXIT_CRITICAL(&s_cmdMux);
   return cmd;
 }
@@ -342,7 +424,8 @@ static void waitForCongestionClear(int maxWaitMs) {
   }
 }
 
-static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
+static bool sendGattPacket(uint16_t attrHandle, const uint8_t *data, size_t len,
+                           bool needConfirm) {
   if (!clientConnected || s_gattsIf == 0) return false;
 
   // If the controller is already complaining, give it air before the first
@@ -355,11 +438,27 @@ static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
   const int maxRetries = ican_eye_chunk_math::maxNotifyRetries();
 
   for (int attempt = 0; attempt < maxRetries; attempt++) {
+    if (needConfirm) {
+      s_controlConfirmationPending = true;
+      s_controlConfirmationOk = false;
+    }
     esp_err_t rc = esp_ble_gatts_send_indicate(
         s_gattsIf, s_connId, attrHandle,
-        (uint16_t)len, (uint8_t *)data, false /* notification, not indication */);
+        (uint16_t)len, (uint8_t *)data, needConfirm);
 
-    if (rc == ESP_OK) return true;
+    if (rc == ESP_OK) {
+      if (!needConfirm) return true;
+      int waited = 0;
+      while (s_controlConfirmationPending && clientConnected && waited < 1000) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+      }
+      if (!s_controlConfirmationPending && s_controlConfirmationOk) {
+        return true;
+      }
+    } else if (needConfirm) {
+      s_controlConfirmationPending = false;
+    }
 
     if (!clientConnected) return false;
 
@@ -376,7 +475,19 @@ static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
     vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
 
+  if (needConfirm) {
+    s_controlConfirmationPending = false;
+  }
   return false;
+}
+
+static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
+  return sendGattPacket(attrHandle, data, len, false);
+}
+
+static bool sendIndication(uint16_t attrHandle, const uint8_t *data,
+                           size_t len) {
+  return sendGattPacket(attrHandle, data, len, true);
 }
 
 // =========================================================================
@@ -386,8 +497,8 @@ static bool sendNotify(uint16_t attrHandle, const uint8_t *data, size_t len) {
 void sendControlMessage(const char *msg) {
   if (!clientConnected)
     return;
-  if (!sendNotify(pCaptureChar->getHandle(),
-                  (const uint8_t *)msg, strlen(msg))) {
+  if (!sendIndication(pCaptureChar->getHandle(),
+                      (const uint8_t *)msg, strlen(msg))) {
     Serial.printf("[BLE] WARN: Control message lost: %s\n", msg);
   }
 }
@@ -411,7 +522,8 @@ static uint32_t crc32(const uint8_t *data, size_t len) {
   return crc ^ 0xFFFFFFFF;
 }
 
-size_t sendImageChunk(uint16_t seqNum, const uint8_t *data, size_t dataLen) {
+size_t sendImageChunk(uint16_t frameId, uint16_t seqNum, const uint8_t *data,
+                      size_t dataLen) {
   if (!clientConnected)
     return 0;
 
@@ -426,7 +538,7 @@ size_t sendImageChunk(uint16_t seqNum, const uint8_t *data, size_t dataLen) {
     return 0;
 
   uint8_t chunkBuf[IMAGE_MAX_PACKET_SIZE];
-  ican_eye_chunk_math::packSeqLE(chunkBuf, seqNum);
+  ican_eye_chunk_math::packFrameSeqLE(chunkBuf, frameId, seqNum);
   memcpy(chunkBuf + IMAGE_HEADER_BYTES, data, dataLen);
 
   // Reset the per-chunk congestion witness before the notify; sendNotify will
@@ -457,6 +569,7 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                        const char *profileName) {
   if (!clientConnected)
     return;
+  expireCachedFrameIfNeeded();
 
   // Reset per-stream flow-control state so a bad prior run does not carry
   // over.  Also clear any stale abort request: we only honour ABORT
@@ -481,19 +594,46 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
     return;
   }
   const unsigned estChunks = (jpegLen + effectiveMax - 1) / effectiveMax;
+  if (estChunks == 0 || estChunks > 0xFFFF) {
+    sendControlMessage("ERR:FRAME_TOO_LARGE");
+    s_lastStreamResult = "frame_too_large";
+    return;
+  }
+
+  uint8_t *cached = (uint8_t *)ps_malloc(jpegLen);
+  if (cached == nullptr) {
+    cached = (uint8_t *)malloc(jpegLen);
+  }
+  if (cached == nullptr) {
+    sendControlMessage("ERR:FRAME_CACHE_UNAVAILABLE");
+    s_lastStreamBytes = 0;
+    s_lastStreamMs = 0;
+    s_lastStreamChunks = 0;
+    s_lastStreamResult = "frame_cache_unavailable";
+    Serial.printf("[BLE] Cannot cache %u-byte frame for retransmit.\n",
+                  (unsigned)jpegLen);
+    return;
+  }
+  memcpy(cached, jpegBuf, jpegLen);
+  clearCachedFrame();
+  s_cachedFrame.frameId = allocateFrameId();
+  s_cachedFrame.data = cached;
+  s_cachedFrame.len = jpegLen;
+  s_cachedFrame.crc = crc32(cached, jpegLen);
+  s_cachedFrame.chunks = (uint16_t)estChunks;
+  s_cachedFrame.payloadBytes = effectiveMax;
+  s_cachedFrame.expiresAtMs = millis() + 90000UL;
 
   Serial.printf("[BLE] Streaming %u bytes (MTU=%u, payload=%u, ~%u chunks, profile=%s)\n",
                 (unsigned)jpegLen, s_negotiatedMtu, (unsigned)effectiveMax,
                 estChunks, profileName);
 
-  // 1. Send SIZE
-  char ctrlMsg[64];
-  snprintf(ctrlMsg, sizeof(ctrlMsg), "SIZE:%u", (unsigned)jpegLen);
-  sendControlMessage(ctrlMsg);
-  vTaskDelay(pdMS_TO_TICKS(30)); // Let client process SIZE before chunks arrive
-
-  const uint32_t crc = crc32(jpegBuf, jpegLen);
-  snprintf(ctrlMsg, sizeof(ctrlMsg), "CRC:%08X", (unsigned)crc);
+  // 1. Send v2 frame header as an indication before chunks arrive.
+  char ctrlMsg[96];
+  snprintf(ctrlMsg, sizeof(ctrlMsg), "FRAME:%u:%u:%08X:%u:%u",
+           s_cachedFrame.frameId, (unsigned)jpegLen,
+           (unsigned)s_cachedFrame.crc, s_cachedFrame.chunks,
+           (unsigned)effectiveMax);
   sendControlMessage(ctrlMsg);
   vTaskDelay(pdMS_TO_TICKS(20));
 
@@ -524,7 +664,8 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
     }
 
     size_t remaining = jpegLen - offset;
-    size_t sent = sendImageChunk(seqNum, jpegBuf + offset, remaining);
+    size_t sent = sendImageChunk(s_cachedFrame.frameId, seqNum,
+                                 s_cachedFrame.data + offset, remaining);
     if (sent == 0) {
       consecutiveFails++;
       if (consecutiveFails >= consecutiveFailsLimit) {
@@ -584,11 +725,8 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
 
   // 3. Send END — repeated 3× with gaps to survive BLE notification loss.
   vTaskDelay(pdMS_TO_TICKS(30));
-  snprintf(ctrlMsg, sizeof(ctrlMsg), "END:%u", seqNum);
-  for (int i = 0; i < 3; i++) {
-    sendControlMessage(ctrlMsg);
-    if (i < 2) vTaskDelay(pdMS_TO_TICKS(50));
-  }
+  snprintf(ctrlMsg, sizeof(ctrlMsg), "END:%u:%u", s_cachedFrame.frameId, seqNum);
+  sendControlMessage(ctrlMsg);
 
   const float kbps = (elapsed > 0) ? (jpegLen / 1024.0f) / (elapsed / 1000.0f) : 0;
   s_lastStreamBytes = (uint32_t)offset;
@@ -599,4 +737,80 @@ void streamImageViaBle(const uint8_t *jpegBuf, size_t jpegLen,
                 "(%.1f KB/s, %d retried, pace=%dms)\n",
                 seqNum, (unsigned)offset, elapsed, kbps, consecutiveFails,
                 s_paceMs);
+}
+
+void acknowledgeImageFrame(uint16_t frameId) {
+  expireCachedFrameIfNeeded();
+  if (s_cachedFrame.data != nullptr && s_cachedFrame.frameId == frameId) {
+    Serial.printf("[BLE] Frame %u ACKed; releasing retransmit cache.\n",
+                  frameId);
+    clearCachedFrame();
+  }
+}
+
+static bool retransmitOneChunk(uint16_t seq) {
+  if (s_cachedFrame.data == nullptr) return false;
+  if (seq >= s_cachedFrame.chunks || s_cachedFrame.payloadBytes == 0) {
+    return false;
+  }
+  const size_t offset = (size_t)seq * s_cachedFrame.payloadBytes;
+  if (offset >= s_cachedFrame.len) return false;
+  size_t remaining = s_cachedFrame.len - offset;
+  if (remaining > s_cachedFrame.payloadBytes) {
+    remaining = s_cachedFrame.payloadBytes;
+  }
+  size_t sent = sendImageChunk(s_cachedFrame.frameId, seq,
+                               s_cachedFrame.data + offset, remaining);
+  return sent > 0;
+}
+
+bool retransmitImageFrameRanges(uint16_t frameId, const char *ranges) {
+  expireCachedFrameIfNeeded();
+  if (!clientConnected) return false;
+  if (s_cachedFrame.data == nullptr || s_cachedFrame.frameId != frameId) {
+    char msg[64];
+    snprintf(msg, sizeof(msg), "ERR:RETRANSMIT_UNAVAILABLE:%u", frameId);
+    sendControlMessage(msg);
+    return false;
+  }
+  if (ican_eye_chunk_math::effectivePayloadBytes(s_negotiatedMtu) <
+      s_cachedFrame.payloadBytes) {
+    char msg[64];
+    snprintf(msg, sizeof(msg), "ERR:RETRANSMIT_UNAVAILABLE:%u", frameId);
+    sendControlMessage(msg);
+    Serial.printf("[BLE] Cannot retransmit frame %u: MTU payload changed.\n",
+                  frameId);
+    return false;
+  }
+
+  Serial.printf("[BLE] Retransmitting frame %u ranges=%s\n", frameId, ranges);
+  const char *cursor = ranges;
+  int resent = 0;
+  while (*cursor != '\0') {
+    char *endPtr = nullptr;
+    unsigned long start = strtoul(cursor, &endPtr, 10);
+    if (endPtr == cursor) break;
+    unsigned long finish = start;
+    if (*endPtr == '-') {
+      cursor = endPtr + 1;
+      finish = strtoul(cursor, &endPtr, 10);
+    }
+    if (finish < start) finish = start;
+    for (unsigned long seq = start; seq <= finish && seq < 0x10000UL; seq++) {
+      if (retransmitOneChunk((uint16_t)seq)) {
+        resent++;
+      }
+      if (!clientConnected) return false;
+    }
+    cursor = endPtr;
+    if (*cursor == ',') cursor++;
+  }
+
+  char msg[64];
+  snprintf(msg, sizeof(msg), "END:%u:%u", s_cachedFrame.frameId,
+           s_cachedFrame.chunks);
+  sendControlMessage(msg);
+  Serial.printf("[BLE] Retransmit complete: frame=%u chunks=%d\n",
+                frameId, resent);
+  return resent > 0;
 }

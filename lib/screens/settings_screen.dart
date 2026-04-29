@@ -100,9 +100,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: AppSpacing.lg),
 
                     // ── 3. Live Detection ──
-                    _buildLiveDetectionSection(settings),
-                    const SizedBox(height: AppSpacing.lg),
-
                     // ── 4. Devices ──
                     _buildDevicesSection(),
                     const SizedBox(height: AppSpacing.lg),
@@ -412,48 +409,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
-
-        const _Divider(),
-
-        _SettingTile(
-          semanticLabel:
-              'Description focus. Currently ${s.promptProfile.label}. '
-              '${s.promptProfile.description}.',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _SettingLabel('Description Focus'),
-              const SizedBox(height: AppSpacing.xs),
-              SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<PromptProfile>(
-                  segments: PromptProfile.values
-                      .map(
-                        (profile) => ButtonSegment<PromptProfile>(
-                          value: profile,
-                          label: Text(profile.label),
-                        ),
-                      )
-                      .toList(),
-                  selected: {s.promptProfile},
-                  onSelectionChanged: (sel) {
-                    HapticFeedback.selectionClick();
-                    s.setPromptProfile(sel.first);
-                  },
-                  style: _segmentedStyle(),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                s.promptProfile.description,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  color: AppColors.textSecondaryOnLight,
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -461,53 +416,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ═══════════════════════════════════════════════════════════════════════════
   // 3. Live Detection
   // ═══════════════════════════════════════════════════════════════════════════
-
-  Widget _buildLiveDetectionSection(SettingsProvider s) {
-    return _Section(
-      title: 'Live Detection',
-      children: [
-        _SettingTile(
-          semanticLabel:
-              'Live detection verbosity. Currently ${s.liveDetectionVerbosity.label}. '
-              '${s.liveDetectionVerbosity.description}.',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _SettingLabel('Announcement Detail'),
-              const SizedBox(height: AppSpacing.xs),
-              SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<LiveDetectionVerbosity>(
-                  segments: LiveDetectionVerbosity.values
-                      .map(
-                        (v) => ButtonSegment<LiveDetectionVerbosity>(
-                          value: v,
-                          label: Text(v.label),
-                        ),
-                      )
-                      .toList(),
-                  selected: {s.liveDetectionVerbosity},
-                  onSelectionChanged: (sel) {
-                    HapticFeedback.selectionClick();
-                    s.setLiveDetectionVerbosity(sel.first);
-                  },
-                  style: _segmentedStyle(),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                s.liveDetectionVerbosity.description,
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  color: AppColors.textSecondaryOnLight,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 4. Devices

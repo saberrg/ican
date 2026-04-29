@@ -30,7 +30,6 @@ class DescribeAttemptTrace {
     required this.imageBytes,
     required this.visionMode,
     required this.detailLevel,
-    required this.promptProfile,
     required this.hazardSensitivity,
     this.requestedEyeProfile,
     this.lastError,
@@ -43,7 +42,6 @@ class DescribeAttemptTrace {
   final int imageBytes;
   final String visionMode;
   final String detailLevel;
-  final String promptProfile;
   final String hazardSensitivity;
   final String? requestedEyeProfile;
   final String? lastError;
@@ -56,7 +54,6 @@ class DescribeAttemptTrace {
     int? imageBytes,
     String? visionMode,
     String? detailLevel,
-    String? promptProfile,
     String? hazardSensitivity,
     String? requestedEyeProfile,
     String? lastError,
@@ -69,7 +66,6 @@ class DescribeAttemptTrace {
       imageBytes: imageBytes ?? this.imageBytes,
       visionMode: visionMode ?? this.visionMode,
       detailLevel: detailLevel ?? this.detailLevel,
-      promptProfile: promptProfile ?? this.promptProfile,
       hazardSensitivity: hazardSensitivity ?? this.hazardSensitivity,
       requestedEyeProfile: requestedEyeProfile ?? this.requestedEyeProfile,
       lastError: lastError ?? this.lastError,
@@ -85,7 +81,6 @@ class DescribeAttemptTrace {
       'imageBytes': imageBytes,
       'visionMode': visionMode,
       'detailLevel': detailLevel,
-      'promptProfile': promptProfile,
       'hazardSensitivity': hazardSensitivity,
       'requestedEyeProfile': requestedEyeProfile,
       'lastError': lastError,
@@ -115,7 +110,6 @@ class DescribeAttemptTrace {
       imageBytes: json['imageBytes'] as int? ?? 0,
       visionMode: json['visionMode'] as String? ?? 'unknown',
       detailLevel: json['detailLevel'] as String? ?? 'unknown',
-      promptProfile: json['promptProfile'] as String? ?? 'unknown',
       hazardSensitivity: json['hazardSensitivity'] as String? ?? 'unknown',
       requestedEyeProfile: json['requestedEyeProfile'] as String?,
       lastError: json['lastError'] as String?,
@@ -146,10 +140,6 @@ class DescribeAttemptTraceStore {
     await prefs.setString(
       '${_prefix}detailLevel',
       json['detailLevel'] as String,
-    );
-    await prefs.setString(
-      '${_prefix}promptProfile',
-      json['promptProfile'] as String,
     );
     await prefs.setString(
       '${_prefix}hazardSensitivity',
@@ -183,7 +173,6 @@ class DescribeAttemptTraceStore {
         'imageBytes': prefs.getInt('${_prefix}imageBytes'),
         'visionMode': prefs.getString('${_prefix}visionMode'),
         'detailLevel': prefs.getString('${_prefix}detailLevel'),
-        'promptProfile': prefs.getString('${_prefix}promptProfile'),
         'hazardSensitivity': prefs.getString('${_prefix}hazardSensitivity'),
         'requestedEyeProfile': prefs.getString('${_prefix}requestedEyeProfile'),
         'lastError': prefs.getString('${_prefix}lastError'),

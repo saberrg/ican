@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,12 +26,17 @@ void main() {
     expect(find.text('Eye'), findsOneWidget);
     expect(find.text('Voice'), findsOneWidget);
     expect(find.text('Vision'), findsOneWidget);
-    expect(find.text('Safety'), findsOneWidget);
-    expect(find.text('Cloud first'), findsWidgets);
+    expect(find.text('Cloud'), findsWidgets);
     expect(find.text('Local unavailable'), findsOneWidget);
-    expect(find.text('Describe'), findsOneWidget);
-    expect(find.text('Offline Describe'), findsOneWidget);
-    expect(find.text('Live Detection'), findsOneWidget);
+    expect(find.text('Live'), findsWidgets);
+    expect(find.text('Run Cloud'), findsOneWidget);
+    expect(find.text('Listen'), findsOneWidget);
+    expect(find.text('Safety'), findsNothing);
+    expect(find.text('Balanced'), findsNothing);
+    expect(find.text('Reading'), findsNothing);
+    expect(find.text('Detailed'), findsNothing);
+    expect(find.text('Offline Describe'), findsNothing);
+    expect(find.text('Live Detection'), findsNothing);
     expect(find.text('Start Voice Command'), findsNothing);
     expect(find.textContaining('Settings'), findsNothing);
     expect(find.textContaining('iCan Cane'), findsNothing);
@@ -145,6 +148,11 @@ void main() {
       await tester.pump();
 
       expect(find.text('Volume changed to 60%'), findsOneWidget);
+      expect(find.text('Description Focus'), findsNothing);
+      expect(find.text('Announcement Detail'), findsNothing);
+      expect(find.text('Balanced'), findsNothing);
+      expect(find.text('Safety'), findsNothing);
+      expect(find.text('Reading'), findsNothing);
       expect(tester.takeException(), isNull);
 
       settings.dispose();

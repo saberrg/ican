@@ -44,7 +44,6 @@ void main() {
       await service.describeOffline(
         _jpegBytes,
         promptContext: const ScenePromptContext(
-          profile: PromptProfile.reading,
           detailLevel: DetailLevel.detailed,
           hazardSensitivity: HazardSensitivity.high,
         ),
@@ -52,9 +51,14 @@ void main() {
 
       expect(
         onDevice.foundationSystemPrompts.single,
-        contains('Reading profile'),
+        contains(
+          'Report hazards, layout, readable text verbatim, and landmarks',
+        ),
       );
-      expect(onDevice.foundationSystemPrompts.single, contains('visible text'));
+      expect(
+        onDevice.foundationSystemPrompts.single,
+        contains('readable text'),
+      );
       expect(
         onDevice.foundationSystemPrompts.single,
         contains('150 centimeters'),
@@ -287,15 +291,19 @@ void main() {
       await service.describeCloud(
         _jpegBytes,
         promptContext: const ScenePromptContext(
-          profile: PromptProfile.safety,
           detailLevel: DetailLevel.brief,
           hazardSensitivity: HazardSensitivity.high,
         ),
       );
 
-      expect(cloud.systemPrompts.single, contains('Safety profile'));
+      expect(
+        cloud.systemPrompts.single,
+        contains(
+          'Report hazards, layout, readable text verbatim, and landmarks',
+        ),
+      );
       expect(cloud.systemPrompts.single, contains('150 centimeters'));
-      expect(cloud.userPrompts.single, contains('safety-first'));
+      expect(cloud.userPrompts.single, contains('Put hazards first'));
     });
 
     test(

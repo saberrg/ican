@@ -140,7 +140,7 @@ class VertexAiService extends ChangeNotifier {
   final Duration _requestTimeout;
   final bool _ownsClient;
 
-  AiModel _model = AiModel.flash;
+  AiModel _model = AiModel.pro;
   AiModel get model => _model;
 
   bool get isConfigured => _apiKey.isNotEmpty && _apiKey != 'dummy';
@@ -156,7 +156,7 @@ class VertexAiService extends ChangeNotifier {
       if (saved != null) {
         _model = AiModel.values.firstWhere(
           (m) => m.id == saved,
-          orElse: () => AiModel.flash,
+          orElse: () => AiModel.pro,
         );
       }
     } catch (_) {}

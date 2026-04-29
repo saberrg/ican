@@ -187,10 +187,9 @@ void main() {
       expect(notifications, greaterThan(0));
     });
 
-    test('Safety Describe requests FAST Eye profile before capture', () async {
+    test('Describe requests BALANCED Eye profile before capture', () async {
       settingsReadyForDescribe(viewModel);
       BleService.instance.enableEyeCommandLoopbackForTesting();
-      viewModel.settingsProvider.setPromptProfile(PromptProfile.safety);
 
       final resultFuture = viewModel.describeNow();
       await Future<void>.delayed(Duration.zero);
@@ -198,7 +197,7 @@ void main() {
 
       expect(
         BleService.instance.eyeCommandsSentForTesting,
-        contains(EyeCommands.profile(EyeProfileIndex.fast)),
+        contains(EyeCommands.profile(EyeProfileIndex.balanced)),
       );
       expect(
         BleService.instance.eyeCommandsSentForTesting,
@@ -208,32 +207,41 @@ void main() {
       await resultFuture;
     });
 
-    test(
-      'Balanced, Reading, and Navigation Describe request BALANCED Eye profile',
-      () async {
-        for (final profile in [
-          PromptProfile.balanced,
-          PromptProfile.reading,
-          PromptProfile.navigation,
-        ]) {
-          BleService.instance.resetEyeReliabilityForTesting();
-          settingsReadyForDescribe(viewModel);
-          BleService.instance.enableEyeCommandLoopbackForTesting();
-          viewModel.settingsProvider.setPromptProfile(profile);
+    test('Eye long press cycles the active vision mode', () async {
+      expect(viewModel.visionControlMode, VisionControlMode.cloud);
 
-          final resultFuture = viewModel.describeNow();
-          await Future<void>.delayed(Duration.zero);
-          await Future<void>.delayed(Duration.zero);
+      BleService.instance.handleEyeControlMessageForTesting(
+        EyeEvents.buttonLong,
+      );
+      await Future<void>.delayed(Duration.zero);
 
-          expect(
-            BleService.instance.eyeCommandsSentForTesting,
-            contains(EyeCommands.profile(EyeProfileIndex.balanced)),
-          );
-          await viewModel.handleEyeCaptureDiagnosticForTesting(_e01());
-          await resultFuture;
-        }
-      },
-    );
+      expect(viewModel.visionControlMode, VisionControlMode.local);
+      expect(speech.spoken, contains('Local mode selected.'));
+    });
+
+    test('Eye single press executes the selected cloud mode', () async {
+      settingsReadyForDescribe(viewModel);
+      BleService.instance.enableEyeCommandLoopbackForTesting();
+
+      BleService.instance.handleEyeControlMessageForTesting(
+        EyeEvents.buttonSingle,
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.profile(EyeProfileIndex.balanced)),
+      );
+      expect(
+        BleService.instance.eyeCommandsSentForTesting,
+        contains(EyeCommands.capture),
+      );
+
+      await viewModel.handleEyeCaptureDiagnosticForTesting(_e01());
+      await Future<void>.delayed(Duration.zero);
+      expect(viewModel.isProcessing, isFalse);
+    });
 
     test('unclear quality-flagged image retries once before speaking', () async {
       viewModel.dispose();
@@ -249,7 +257,6 @@ void main() {
       speech.spoken.clear();
       settingsReadyForDescribe(viewModel);
       BleService.instance.enableEyeCommandLoopbackForTesting();
-      viewModel.settingsProvider.setPromptProfile(PromptProfile.safety);
       sceneService.responses = [
         'The scene could not be clearly identified.',
         'A brighter hallway is clear.',
@@ -294,7 +301,6 @@ void main() {
       BleService.instance.enableEyeCommandLoopbackForTesting(
         autoProfileAck: false,
       );
-      viewModel.settingsProvider.setPromptProfile(PromptProfile.balanced);
 
       final resultFuture = viewModel.describeNow();
       await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -322,11 +328,10 @@ void main() {
         expect(trace!.stage, DescribePipelineStage.completed);
         expect(trace.imageBytes, greaterThan(0));
         expect(trace.visionMode, VisionMode.auto.name);
-        // SettingsProvider default is now DetailLevel.brief (reliability
-        // overhaul: one opinionated spoken contract).  The trace must echo
+        // The trace must echo
         // whatever default SettingsProvider currently ships so the test
         // does not silently drift when the default moves again.
-        expect(trace.detailLevel, DetailLevel.brief.name);
+        expect(trace.detailLevel, DetailLevel.detailed.name);
       },
     );
 

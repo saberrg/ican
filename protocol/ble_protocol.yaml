@@ -74,13 +74,19 @@ characteristics:
       ABORT: "Cancel the in-flight image stream and stop live mode. Firmware replies with ERR:STREAM_ABORTED:...:user."
       PROFILE: "Switch camera quality profile. Format: PROFILE:{index}"
       STATUS: "Request current status"
+      ACK_FRAME: "Acknowledge a completed v2 image frame. Format: ACK_FRAME:{frameId}"
+      NACK_FRAME: "Request retransmit of missing/corrupt v2 chunks. Format: NACK_FRAME:{frameId}:{ranges}, where ranges is comma-separated seq or start-end."
     events:
       "CAPTURE:START": "Firmware accepted a capture request and is attempting camera capture."
+      "BUTTON:SINGLE": "Physical button single press detected (Eye -> App). App executes the active Cloud, Local, or Live mode."
       "BUTTON:DOUBLE": "Physical button double-press detected (Eye -> App). Triggers voice command listening."
+      "BUTTON:LONG": "Physical button long press detected (Eye -> App). App cycles the active Cloud, Local, or Live mode."
       "STATUS:{profileIndex}:{profileName}:{IDLE|LIVE}:{intervalMs}:{firmwareVersion}:{freePsram}:{mtu}:{payloadCap}:{lastError}:{cameraSensor}:{lastStreamBytes}:{lastStreamMs}:{lastStreamChunks}:{qualityFlags}:{brightnessEstimate}:{contrastEstimate}:{tuneAction}": "Status response to STATUS command. Fields after firmwareVersion are optional for backward compatibility. qualityFlags bitmask: 1=dim, 2=bright, 4=low_contrast, 8=large_jpeg. Brightness/contrast are lightweight JPEG-stream estimates used for diagnostics and next-capture tuning."
-      "SIZE:{bytes}": "JPEG byte length for the next image stream."
-      "CRC:{hex}": "CRC32 of the complete JPEG payload."
-      "END:{chunks}": "Image stream finished after the given chunk count."
+      "FRAME:{frameId}:{bytes}:{crc}:{chunks}:{payloadCap}": "Protocol v2 image frame header. Control characteristic uses indications; image chunks use notifications plus ACK/NACK recovery."
+      "SIZE:{bytes}": "Legacy v1 JPEG byte length for the next image stream."
+      "CRC:{hex}": "Legacy v1 CRC32 of the complete JPEG payload."
+      "END:{frameId}:{chunks}": "Protocol v2 image stream finished after the given chunk count."
+      "END:{chunks}": "Legacy v1 image stream finished after the given chunk count."
       "LIVE_STARTED": "Live mode enabled; firmware will auto-capture at the configured interval."
       "LIVE_STOPPED": "Live mode disabled."
       "LIVE_BUSY": "Live-mode capture is in flight; no overlapping capture will begin."
@@ -88,6 +94,8 @@ characteristics:
       "ERR:CAMERA_CAPTURE_FAILED": "Camera driver failed to return a JPEG frame."
       "ERR:STREAM_ABORTED:{sentChunks}:{sentBytes}:{expectedBytes}[:reason]": "Firmware aborted an incomplete image stream. Optional reason suffix (e.g. 'user') identifies why."
       "ERR:CHUNK_NOTIFY_FAILED:{sequence}": "Firmware could not notify a chunk after retries."
+      "ERR:FRAME_CACHE_UNAVAILABLE": "Firmware could not allocate a retransmit cache for the frame."
+      "ERR:RETRANSMIT_UNAVAILABLE:{frameId}": "Firmware no longer has the requested frame cached."
       "ERR:{code}": "Firmware command error."
 
   gps_data_tx:
@@ -209,10 +217,11 @@ gps_packet:
 # ---------------------------------------------------------------------------
 # Image Stream Packet Layout (eye_image_stream_tx, variable)
 # ---------------------------------------------------------------------------
-# Byte 0-1:  sequence_number (uint16_t, little-endian)
-# Byte 2+:   payload (up to 509 bytes of JPEG data)
+# Byte 0-1:  frame_id (uint16_t, little-endian)
+# Byte 2-3:  sequence_number (uint16_t, little-endian)
+# Byte 4+:   payload (up to 508 bytes of JPEG data)
 #
-# The protocol max payload stays 509 for back-compat with older firmware, but
+# The protocol max payload is 508 with the v2 header, but
 # production iCan Eye firmware clamps outgoing chunks to `firmware_payload_cap`
 # bytes (240) to keep iOS BLE ACL queues well below saturation. The Flutter
 # assembler derives chunk size from each packet, so smaller chunks are safe.
@@ -227,12 +236,17 @@ gps_packet:
 #   clean readiness STATUS round trip.
 # - QUALITY (2) and MAX (3) are operator diagnostics, not demo defaults.
 image_packet:
-  header_bytes: 2
-  max_payload_bytes: 509
+  protocol_version: 2
+  header_bytes: 4
+  max_payload_bytes: 508
   max_packet_bytes: 512
   firmware_payload_cap: 240
   fields:
     - name: sequence_number
+      offset: 2
+      size: 2
+      type: uint16_le
+    - name: frame_id
       offset: 0
       size: 2
       type: uint16_le

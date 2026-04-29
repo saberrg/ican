@@ -41,33 +41,20 @@ enum LiveDetectionVerbosity {
   final String description;
 }
 
-enum PromptProfile {
-  balanced(
-    'Scene',
-    'General scene description with safety, text, and landmarks',
-  ),
-  safety('Safety', 'Hazards, motion, crossings, obstacles, and people first'),
-  navigation(
-    'Navigation',
-    'Doors, paths, landmarks, signs, and orientation cues first',
-  ),
-  reading('Reading', 'Visible text, labels, signs, and screens first');
+enum VisionControlMode {
+  cloud('Cloud'),
+  local('Local'),
+  live('Live');
 
-  const PromptProfile(this.label, this.description);
+  const VisionControlMode(this.label);
   final String label;
-  final String description;
 
-  String get instruction {
-    switch (this) {
-      case PromptProfile.balanced:
-        return 'Balance safety, directly-ahead details, visible text, and orientation landmarks.';
-      case PromptProfile.safety:
-        return 'Prioritize hazards first: obstacles, steps, vehicles, people moving nearby, crossings, drop-offs, and anything within arm\'s reach. Keep non-safety details brief.';
-      case PromptProfile.navigation:
-        return 'Prioritize navigation cues: paths, doors, exits, signs, landmarks, clear walking space, and left/right/ahead orientation.';
-      case PromptProfile.reading:
-        return 'Prioritize visible text. Read signs, labels, screens, buttons, and documents verbatim before describing the rest of the scene.';
-    }
+  VisionControlMode get next {
+    return switch (this) {
+      VisionControlMode.cloud => VisionControlMode.local,
+      VisionControlMode.local => VisionControlMode.live,
+      VisionControlMode.live => VisionControlMode.cloud,
+    };
   }
 }
 
@@ -171,16 +158,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   // ── Descriptions ──
-  // Defaults line up with the demo-safe prompt contract shipped in
-  // ScenePromptBuilder. These knobs now drive runtime prompt and Eye profile
-  // policy, so keep them persisted for voice/settings continuity.
-  DetailLevel _detailLevel = DetailLevel.brief;
-  HazardSensitivity _hazardSensitivity = HazardSensitivity.medium;
-  PromptProfile _promptProfile = PromptProfile.safety;
+  // Prompt tuning is internal and voice-driven; the Settings UI no longer
+  // exposes mode choices for the demo path.
+  DetailLevel _detailLevel = DetailLevel.detailed;
+  HazardSensitivity _hazardSensitivity = HazardSensitivity.high;
 
   DetailLevel get detailLevel => _detailLevel;
   HazardSensitivity get hazardSensitivity => _hazardSensitivity;
-  PromptProfile get promptProfile => _promptProfile;
 
   void setDetailLevel(DetailLevel level) {
     _detailLevel = level;
@@ -196,25 +180,24 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setPromptProfile(PromptProfile profile) {
-    _promptProfile = profile;
-    _save('prompt_profile', profile.index);
-    _recordChange('Focus changed to ${_promptFeedbackLabel(profile)}');
-    notifyListeners();
-  }
-
   // ── Live Detection ──
-  // Minimal verbosity keeps Live-mode TTS focused on the single top object so
-  // the state machine has time to cooldown before the next frame.
-  LiveDetectionVerbosity _liveDetectionVerbosity =
-      LiveDetectionVerbosity.minimal;
+  LiveDetectionVerbosity _liveDetectionVerbosity = LiveDetectionVerbosity.full;
+  VisionControlMode _visionControlMode = VisionControlMode.cloud;
 
   LiveDetectionVerbosity get liveDetectionVerbosity => _liveDetectionVerbosity;
+  VisionControlMode get visionControlMode => _visionControlMode;
 
   void setLiveDetectionVerbosity(LiveDetectionVerbosity v) {
     _liveDetectionVerbosity = v;
     _save('live_detection_verbosity', v.index);
     _recordChange('Live detection changed to ${v.label}');
+    notifyListeners();
+  }
+
+  void setVisionControlMode(VisionControlMode mode) {
+    _visionControlMode = mode;
+    _save('vision_control_mode', mode.name);
+    _recordChange('Mode changed to ${mode.label}');
     notifyListeners();
   }
 
@@ -297,14 +280,17 @@ class SettingsProvider extends ChangeNotifier {
         _hazardSensitivity = HazardSensitivity.values[hazardIdx];
       }
 
-      final promptIdx = prefs.getInt('prompt_profile');
-      if (promptIdx != null && promptIdx < PromptProfile.values.length) {
-        _promptProfile = PromptProfile.values[promptIdx];
-      }
-
       final verbIdx = prefs.getInt('live_detection_verbosity');
       if (verbIdx != null && verbIdx < LiveDetectionVerbosity.values.length) {
         _liveDetectionVerbosity = LiveDetectionVerbosity.values[verbIdx];
+      }
+
+      final modeName = prefs.getString('vision_control_mode');
+      if (modeName != null) {
+        _visionControlMode = VisionControlMode.values.firstWhere(
+          (mode) => mode.name == modeName,
+          orElse: () => VisionControlMode.cloud,
+        );
       }
 
       final fontIdx = prefs.getInt('font_scale');
@@ -343,14 +329,5 @@ class SettingsProvider extends ChangeNotifier {
 
   void _recordChange(String summary) {
     _lastChangeSummary = summary;
-  }
-
-  static String _promptFeedbackLabel(PromptProfile profile) {
-    return switch (profile) {
-      PromptProfile.balanced => 'Balanced',
-      PromptProfile.safety => 'Safety',
-      PromptProfile.navigation => 'Navigation',
-      PromptProfile.reading => 'Reading',
-    };
   }
 }

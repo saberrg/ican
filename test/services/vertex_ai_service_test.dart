@@ -157,6 +157,27 @@ void main() {
       expect(capturedRequest.url.queryParameters, isNot(contains('key')));
     });
 
+    test(
+      'cloud image requests default to the high-quality Pro model',
+      () async {
+        late http.Request capturedRequest;
+        final service = VertexAiService(
+          apiKey: 'test-key',
+          httpClient: MockClient((request) async {
+            capturedRequest = request;
+            return http.Response(_successBody, 200);
+          }),
+        );
+
+        await service.generateContentFromImage(
+          _jpegBytes,
+          systemPrompt: 'Describe safely.',
+        );
+
+        expect(capturedRequest.url.path, contains('gemini-2.5-pro'));
+      },
+    );
+
     test('streaming preserves chunk spacing and finish reason', () async {
       late http.Request capturedRequest;
       final service = VertexAiService(

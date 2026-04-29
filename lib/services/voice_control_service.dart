@@ -17,7 +17,6 @@ enum VoiceActionType {
   setVolume,
   resetSpeechDefaults,
   setDetailLevel,
-  setPromptProfile,
   setVisionMode,
   setLiveVerbosity,
   contactCaretaker,
@@ -243,7 +242,6 @@ class VoiceIntentParser {
         slots: {'detailLevel': DetailLevel.detailed.name},
       );
     }
-
     if (_containsAny(normalized, [
       'only hazards',
       'only tell me hazards',
@@ -255,46 +253,17 @@ class VoiceIntentParser {
     ])) {
       return _intent(
         transcript,
-        VoiceActionType.setPromptProfile,
-        slots: {'promptProfile': PromptProfile.safety.name, 'selfTune': true},
-      );
-    }
-    if (_containsAny(normalized, [
-      'read signs',
-      'read that sign',
-      'read the sign',
-      'read that text',
-      'read text first',
-      'reading mode',
-    ])) {
-      return _intent(
-        transcript,
-        VoiceActionType.setPromptProfile,
-        slots: {'promptProfile': PromptProfile.reading.name},
-      );
-    }
-    if (_containsAny(normalized, [
-      'navigation mode',
-      'landmarks',
-      'where to walk',
-    ])) {
-      return _intent(
-        transcript,
-        VoiceActionType.setPromptProfile,
-        slots: {'promptProfile': PromptProfile.navigation.name},
-      );
-    }
-    if (_containsAny(normalized, ['balanced mode', 'normal mode'])) {
-      return _intent(
-        transcript,
-        VoiceActionType.setPromptProfile,
-        slots: {'promptProfile': PromptProfile.balanced.name},
+        VoiceActionType.setDetailLevel,
+        slots: {'detailLevel': DetailLevel.brief.name},
       );
     }
 
     if (_containsAny(normalized, [
       'use local',
       'use local vision',
+      'go local',
+      'local mode',
+      'switch to local',
       'offline mode',
       'local model',
       'local vision',
@@ -305,7 +274,13 @@ class VoiceIntentParser {
         slots: {'visionMode': VisionMode.offlineOnly.name},
       );
     }
-    if (_containsAny(normalized, ['use cloud', 'cloud mode', 'gemini'])) {
+    if (_containsAny(normalized, [
+      'use cloud',
+      'go cloud',
+      'cloud mode',
+      'switch to cloud',
+      'gemini',
+    ])) {
       return _intent(
         transcript,
         VoiceActionType.setVisionMode,
@@ -334,12 +309,6 @@ class VoiceIntentParser {
       return _clarification(
         transcript,
         'Do you want local basic vision, cloud vision, or auto vision?',
-      );
-    }
-    if (_containsAny(normalized, ['change focus', 'focus mode'])) {
-      return _clarification(
-        transcript,
-        'Do you want scene, safety, navigation, or reading focus?',
       );
     }
 
@@ -455,10 +424,6 @@ class VoiceIntentResolver {
           if (!DetailLevel.values.any((v) => v.name == entry.value)) {
             return false;
           }
-        case 'promptProfile':
-          if (!PromptProfile.values.any((v) => v.name == entry.value)) {
-            return false;
-          }
         case 'visionMode':
           if (!VisionMode.values.any((v) => v.name == entry.value)) {
             return false;
@@ -500,7 +465,7 @@ class GeminiVoiceIntentFallbackParser implements VoiceIntentFallbackParser {
     return '''
 Return strict JSON only. Convert this iCan voice command into one allowlisted action.
 Allowed actions: ${VoiceActionType.values.map((v) => v.name).join(', ')}.
-Allowed slots: delta(double), wpm(int), percent(int), detailLevel(${DetailLevel.values.map((v) => v.name).join('|')}), promptProfile(${PromptProfile.values.map((v) => v.name).join('|')}), visionMode(${VisionMode.values.map((v) => v.name).join('|')}), liveVerbosity(${LiveDetectionVerbosity.values.map((v) => v.name).join('|')}), selfTune(bool).
+Allowed slots: delta(double), wpm(int), percent(int), detailLevel(${DetailLevel.values.map((v) => v.name).join('|')}), visionMode(${VisionMode.values.map((v) => v.name).join('|')}), liveVerbosity(${LiveDetectionVerbosity.values.map((v) => v.name).join('|')}), selfTune(bool).
 If uncertain, use action "unknown" with confidence below 0.72.
 Transcript: "$transcript"
 JSON shape: {"action":"describeNow","confidence":0.0,"slots":{}}
@@ -546,7 +511,6 @@ abstract class VoiceControlTarget {
   double get volume;
   int get wordsPerMinute;
   DetailLevel get detailLevel;
-  PromptProfile get promptProfile;
   LiveDetectionVerbosity get liveDetectionVerbosity;
   VisionMode get visionMode;
   String get deviceStatusSummary;
@@ -564,7 +528,6 @@ abstract class VoiceControlTarget {
   Future<void> setVolume(double volume);
   Future<void> resetSpeechDefaults();
   Future<void> setDetailLevel(DetailLevel level);
-  Future<void> setPromptProfile(PromptProfile profile);
   Future<void> setLiveDetectionVerbosity(LiveDetectionVerbosity verbosity);
   Future<void> setVisionMode(VisionMode mode);
   Future<String> describeNow();
@@ -595,10 +558,6 @@ class AppVoiceControlTarget implements VoiceControlTarget {
 
   @override
   DetailLevel get detailLevel => settings?.detailLevel ?? DetailLevel.detailed;
-
-  @override
-  PromptProfile get promptProfile =>
-      settings?.promptProfile ?? PromptProfile.balanced;
 
   @override
   LiveDetectionVerbosity get liveDetectionVerbosity =>
@@ -650,6 +609,7 @@ class AppVoiceControlTarget implements VoiceControlTarget {
   @override
   bool get canStartLiveDetection =>
       (homeViewModel?.isEyeConnected ?? false) &&
+      (BleService.instance.eyeReadinessStatus.ready) &&
       !(homeViewModel?.liveVisionActive ?? false);
 
   @override
@@ -679,11 +639,6 @@ class AppVoiceControlTarget implements VoiceControlTarget {
   }
 
   @override
-  Future<void> setPromptProfile(PromptProfile profile) async {
-    settings?.setPromptProfile(profile);
-  }
-
-  @override
   Future<void> setLiveDetectionVerbosity(
     LiveDetectionVerbosity verbosity,
   ) async {
@@ -692,6 +647,17 @@ class AppVoiceControlTarget implements VoiceControlTarget {
 
   @override
   Future<void> setVisionMode(VisionMode mode) async {
+    final vm = homeViewModel;
+    if (vm != null) {
+      if (mode == VisionMode.cloudOnly || mode == VisionMode.auto) {
+        await vm.setVisionControlMode(VisionControlMode.cloud);
+        return;
+      }
+      if (mode == VisionMode.offlineOnly) {
+        await vm.setVisionControlMode(VisionControlMode.local);
+        return;
+      }
+    }
     await sceneService?.setMode(mode);
   }
 
@@ -800,8 +766,8 @@ class VoiceControlService {
       case VoiceActionType.help:
         return _ok(_helpText);
       case VoiceActionType.contactCaretaker:
-        return _ok(
-          'Caretaker contact card is ready. Latest scene: ${target.latestSceneSummary}',
+        return _fail(
+          'Caretaker contact is hidden for this demo. Say status, describe, cloud mode, local mode, or start live.',
         );
       case VoiceActionType.setSpeechRate:
         return _setSpeechRate(intent);
@@ -815,8 +781,6 @@ class VoiceControlService {
         });
       case VoiceActionType.setDetailLevel:
         return _setDetailLevel(intent);
-      case VoiceActionType.setPromptProfile:
-        return _setPromptProfile(intent);
       case VoiceActionType.setVisionMode:
         return _setVisionMode(intent);
       case VoiceActionType.setLiveVerbosity:
@@ -877,24 +841,6 @@ class VoiceControlService {
     );
   }
 
-  Future<VoiceActionResult> _setPromptProfile(VoiceIntent intent) async {
-    final profile = PromptProfile.values.firstWhere(
-      (value) => value.name == intent.slots['promptProfile'],
-      orElse: () => target.promptProfile,
-    );
-    await target.setPromptProfile(profile);
-
-    final changes = <String, Object?>{'promptProfile': profile.name};
-    if (intent.slots['selfTune'] == true && profile == PromptProfile.safety) {
-      await target.setDetailLevel(DetailLevel.brief);
-      await target.setLiveDetectionVerbosity(LiveDetectionVerbosity.minimal);
-      changes['detailLevel'] = DetailLevel.brief.name;
-      changes['liveVerbosity'] = LiveDetectionVerbosity.minimal.name;
-    }
-
-    return _ok(_profileConfirmation(profile), changes);
-  }
-
   Future<VoiceActionResult> _setVisionMode(VoiceIntent intent) async {
     final mode = VisionMode.values.firstWhere(
       (value) => value.name == intent.slots['visionMode'],
@@ -930,27 +876,14 @@ class VoiceControlService {
     return VoiceActionResult(success: false, spokenConfirmation: confirmation);
   }
 
-  static String _profileConfirmation(PromptProfile profile) {
-    switch (profile) {
-      case PromptProfile.balanced:
-        return 'Scene focus on.';
-      case PromptProfile.safety:
-        return 'Safety mode on. I will prioritize hazards.';
-      case PromptProfile.navigation:
-        return 'Navigation mode on. I will prioritize landmarks and walking cues.';
-      case PromptProfile.reading:
-        return 'Reading mode on. I will read visible text first.';
-    }
-  }
-
   static String _visionModeConfirmation(VisionMode mode) {
     switch (mode) {
       case VisionMode.auto:
-        return 'Auto vision mode on. I will use the best available backend.';
+        return 'Cloud mode selected.';
       case VisionMode.offlineOnly:
-        return 'Local basic vision on.';
+        return 'Local mode selected.';
       case VisionMode.cloudOnly:
-        return 'Cloud vision mode on.';
+        return 'Cloud mode selected.';
     }
   }
 
@@ -966,6 +899,5 @@ class VoiceControlService {
   static const _helpText =
       'You can say: describe, repeat, pause, resume, start live detection, '
       'stop live detection, status, talk faster, talk slower, louder, quieter, '
-      'reset speech, only hazards, read signs first, use local model, use cloud, '
-      'vision status, what failed, or contact caretaker.';
+      'reset speech, local mode, cloud mode, vision status, or what failed.';
 }

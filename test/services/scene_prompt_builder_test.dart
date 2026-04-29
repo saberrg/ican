@@ -13,46 +13,8 @@ void main() {
       expect(first.systemPrompt, second.systemPrompt);
       expect(first.userPrompt, second.userPrompt);
       expect(first.maxOutputTokens, second.maxOutputTokens);
-      expect(first.systemPrompt, contains('Safety profile'));
-    });
-
-    test(
-      'balanced profile includes hazards ahead layout text and landmarks',
-      () {
-        final contract = builder.build(
-          const ScenePromptContext(profile: PromptProfile.balanced),
-        );
-
-        expect(contract.systemPrompt.toLowerCase(), contains('hazard'));
-        expect(contract.systemPrompt.toLowerCase(), contains('clock position'));
-        expect(contract.systemPrompt.toLowerCase(), contains('verbatim'));
-        expect(contract.systemPrompt.toLowerCase(), contains('landmarks'));
-        expect(contract.userPrompt.toLowerCase(), contains('ahead/layout'));
-      },
-    );
-
-    test('safety profile prioritizes hazards movement and safe path', () {
-      final contract = builder.build(
-        const ScenePromptContext(profile: PromptProfile.safety),
-      );
-
-      expect(contract.systemPrompt.toLowerCase(), contains('movement'));
-      expect(contract.systemPrompt.toLowerCase(), contains('within-reach'));
-      expect(
-        contract.systemPrompt.toLowerCase(),
-        contains('safest visible path'),
-      );
-      expect(contract.userPrompt.toLowerCase(), contains('safety-first'));
-    });
-
-    test('reading profile reads visible text before spatial context', () {
-      final contract = builder.build(
-        const ScenePromptContext(profile: PromptProfile.reading),
-      );
-
-      expect(contract.systemPrompt.toLowerCase(), contains('reading profile'));
-      expect(contract.systemPrompt.toLowerCase(), contains('verbatim first'));
-      expect(contract.userPrompt.toLowerCase(), contains('visible text'));
+      expect(first.systemPrompt, contains('Report hazards'));
+      expect(first.systemPrompt, contains('150 centimeters'));
     });
 
     test('detail level and hazard sensitivity affect prompt contract', () {
@@ -78,7 +40,7 @@ void main() {
       );
       expect(
         detailed.systemPrompt,
-        contains('4 or 5 complete spoken sentences'),
+        contains('4 to 6 complete spoken sentences'),
       );
     });
 
@@ -95,30 +57,21 @@ void main() {
         'markdown',
         'as an ai',
       ]) {
-        expect(
-          lower,
-          contains(banned),
-          reason:
-              'system prompt must explicitly forbid the phrase "$banned" so '
-              'the model avoids it in output.',
-        );
+        expect(lower, contains(banned));
       }
     });
 
-    test('user prompt is a direct safety-first question', () {
-      final contract = builder.build(
-        const ScenePromptContext(profile: PromptProfile.safety),
-      );
+    test('user prompt is a direct safety-first request', () {
+      final contract = builder.build();
 
       expect(contract.userPrompt.toLowerCase(), contains('blind user'));
-      expect(contract.userPrompt.toLowerCase(), contains('safe'));
       expect(contract.userPrompt.toLowerCase(), contains('hazards first'));
     });
 
-    test('max output tokens stays small for spoken output', () {
+    test('max output tokens stays bounded for spoken output', () {
       final contract = builder.build();
 
-      expect(contract.maxOutputTokens, lessThanOrEqualTo(500));
+      expect(contract.maxOutputTokens, lessThanOrEqualTo(650));
       expect(contract.maxOutputTokens, greaterThan(0));
     });
   });

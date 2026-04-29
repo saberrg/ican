@@ -22,6 +22,7 @@ import UIKit
     registerAppLogChannel(with: messenger)
     OnDeviceVisionChannel.register(with: messenger)
     AudioPlaybackChannel.register(with: messenger)
+    LiveXChannel.register(with: messenger)
   }
 
   override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {

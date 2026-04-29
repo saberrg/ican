@@ -205,7 +205,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
         .listen((_) => _handleEyeDisconnected());
 
     await _ble.setEyeProfile(EyeProfileIndex.fast);
-    await _ble.startLiveCapture(intervalMs: 1500);
+    await _ble.startLiveCapture(intervalMs: 900);
     // Transition into transferring so the first incoming chunk is accepted.
     _setLive(LiveState.transferring);
   }
@@ -271,7 +271,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
 
           case LiveDetectionVerbosity.positional:
             final top = filtered.first;
-            final position = _positionFromCenterX(top.centerX);
+            final position = _clockPositionFromCenterX(top.centerX);
             final lastTime = _lastAnnounced[top.label];
             if (lastTime == null ||
                 now.difference(lastTime) >= const Duration(seconds: 3)) {
@@ -290,7 +290,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
             if (!anyRecentlyAnnounced) {
               final parts = topN
                   .map((d) {
-                    final pos = _positionFromCenterX(d.centerX);
+                    final pos = _clockPositionFromCenterX(d.centerX);
                     return '${d.label} $pos';
                   })
                   .join(', ');
@@ -302,7 +302,7 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
             for (final d in topN) {
               _addLogEntry(
                 d.label,
-                _positionFromCenterX(d.centerX),
+                _clockPositionFromCenterX(d.centerX),
                 d.confidence,
                 now,
               );
@@ -356,9 +356,14 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
       cues.add(
         _DetectionEvent(
           label: result.personCount == 1
-              ? '1 person detected'
+              ? 'Person detected'
               : '${result.personCount} people detected',
-          position: '',
+          position: result.personRects.isEmpty
+              ? ''
+              : _clockPositionFromCenterX(
+                  (result.personRects.first['x'] ?? 0.5) +
+                      ((result.personRects.first['w'] ?? 0) / 2),
+                ),
           confidence: 1,
           timestamp: now,
         ),
@@ -428,10 +433,12 @@ class _LiveDetectionScreenState extends State<LiveDetectionScreen> {
     });
   }
 
-  static String _positionFromCenterX(double cx) {
-    if (cx < 0.33) return 'on your left';
-    if (cx < 0.66) return 'ahead';
-    return 'on your right';
+  static String _clockPositionFromCenterX(double cx) {
+    if (cx < 0.17) return 'at your 10 o\'clock';
+    if (cx < 0.34) return 'at your 11 o\'clock';
+    if (cx < 0.66) return 'at your 12 o\'clock';
+    if (cx < 0.83) return 'at your 1 o\'clock';
+    return 'at your 2 o\'clock';
   }
 
   void _addLogEntry(

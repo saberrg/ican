@@ -23,8 +23,9 @@ void main() {
         'CRC:${EyeImageTransferAssembler.crc32Hex(jpeg)}',
       );
       assembler.handleImageChunk(_chunk(0, jpeg.sublist(0, 3)));
-      assembler.handleImageChunk(_chunk(1, jpeg.sublist(3)));
-      final result = assembler.handleControlMessage('END:2');
+      final result =
+          assembler.handleImageChunk(_chunk(1, jpeg.sublist(3))) ??
+          assembler.handleControlMessage('END:2');
       if (result?.image != null) images.add(result!.image!);
 
       expect(images, hasLength(1));
@@ -59,8 +60,9 @@ void main() {
       assembler.handleControlMessage(
         'CRC:${EyeImageTransferAssembler.crc32Hex(jpeg)}',
       );
-      assembler.handleImageChunk(_chunk(1, jpeg.sublist(3)));
-      final result = assembler.handleControlMessage('END:2');
+      final result =
+          assembler.handleImageChunk(_chunk(1, jpeg.sublist(3))) ??
+          assembler.handleControlMessage('END:2');
 
       expect(result?.image, jpeg);
     });
@@ -71,8 +73,12 @@ void main() {
 
       assembler.handleControlMessage(EyeEvents.captureStart);
       assembler.handleControlMessage('SIZE:${jpeg.length}');
-      assembler.handleImageChunk(_chunk(0, jpeg));
-      final firstEnd = assembler.handleControlMessage('END:1');
+      assembler.handleControlMessage(
+        'CRC:${EyeImageTransferAssembler.crc32Hex(jpeg)}',
+      );
+      final firstEnd =
+          assembler.handleImageChunk(_chunk(0, jpeg)) ??
+          assembler.handleControlMessage('END:1');
       final duplicateEnd = assembler.handleControlMessage('END:1');
 
       expect(firstEnd?.image, jpeg);
@@ -112,8 +118,12 @@ void main() {
 
       assembler.handleControlMessage(EyeEvents.captureStart);
       assembler.handleControlMessage('SIZE:${bytes.length}');
-      assembler.handleImageChunk(_chunk(0, bytes));
-      final result = assembler.handleControlMessage('END:1');
+      assembler.handleControlMessage(
+        'CRC:${EyeImageTransferAssembler.crc32Hex(bytes)}',
+      );
+      final result =
+          assembler.handleImageChunk(_chunk(0, bytes)) ??
+          assembler.handleControlMessage('END:1');
 
       expect(result?.diagnostic?.stableCode, 'Eye E03');
       expect(result?.diagnostic?.jpegMagicValid, isFalse);
@@ -126,8 +136,9 @@ void main() {
       assembler.handleControlMessage(EyeEvents.captureStart);
       assembler.handleControlMessage('SIZE:${jpeg.length}');
       assembler.handleControlMessage('CRC:00000000');
-      assembler.handleImageChunk(_chunk(0, jpeg));
-      final result = assembler.handleControlMessage('END:1');
+      final result =
+          assembler.handleImageChunk(_chunk(0, jpeg)) ??
+          assembler.handleControlMessage('END:1');
 
       expect(result?.diagnostic?.stableCode, 'Eye E04');
       expect(result?.diagnostic?.expectedCrc, '00000000');
@@ -188,6 +199,76 @@ void main() {
       expect(diagnostic?.expectedBytes, 240);
       expect(diagnostic?.firmwareAbortReason, EyeEvents.abortReasonUser);
       expect(diagnostic?.spokenMessage, contains('cancelled by the app'));
+    });
+
+    test('v2 frame completes without END and emits ACK', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+      final jpeg = _jpegBytes();
+      final crc = EyeImageTransferAssembler.crc32Hex(jpeg);
+
+      assembler.handleControlMessage(EyeEvents.captureStart);
+      assembler.handleControlMessage('FRAME:42:${jpeg.length}:$crc:2:240');
+      assembler.handleImageChunk(_chunkV2(42, 0, jpeg.sublist(0, 3)));
+      final result = assembler.handleImageChunk(
+        _chunkV2(42, 1, jpeg.sublist(3)),
+      );
+
+      expect(result?.image, jpeg);
+      expect(result?.ackCommand, 'ACK_FRAME:42');
+    });
+
+    test('v2 out-of-order chunks assemble by sequence number', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+      final jpeg = _jpegBytes();
+      final crc = EyeImageTransferAssembler.crc32Hex(jpeg);
+
+      assembler.handleControlMessage('FRAME:7:${jpeg.length}:$crc:2:240');
+      assembler.handleImageChunk(_chunkV2(7, 1, jpeg.sublist(3)));
+      final result = assembler.handleImageChunk(
+        _chunkV2(7, 0, jpeg.sublist(0, 3)),
+      );
+
+      expect(result?.image, jpeg);
+      expect(result?.ackCommand, 'ACK_FRAME:7');
+    });
+
+    test('v2 timeout with missing chunks emits NACK ranges', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+      final jpeg = _jpegBytes();
+      final crc = EyeImageTransferAssembler.crc32Hex(jpeg);
+
+      assembler.handleControlMessage('FRAME:9:${jpeg.length}:$crc:3:240');
+      assembler.handleImageChunk(_chunkV2(9, 0, jpeg.sublist(0, 2)));
+      assembler.handleImageChunk(_chunkV2(9, 2, jpeg.sublist(4)));
+      final result = assembler.handleTimeoutEvent();
+
+      expect(result.nackCommand, 'NACK_FRAME:9:1');
+      expect(result.diagnostic, isNull);
+    });
+
+    test('v2 stale frame chunks are ignored', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+      final jpeg = _jpegBytes();
+      final crc = EyeImageTransferAssembler.crc32Hex(jpeg);
+
+      assembler.handleControlMessage('FRAME:10:${jpeg.length}:$crc:1:240');
+      final stale = assembler.handleImageChunk(_chunkV2(11, 0, jpeg));
+      final timeout = assembler.handleTimeoutEvent();
+
+      expect(stale, isNull);
+      expect(timeout.nackCommand, 'NACK_FRAME:10:0');
+    });
+
+    test('legacy transfer without CRC does not emit complete image', () {
+      final assembler = EyeImageTransferAssembler()..beginCaptureCommand();
+      final jpeg = _jpegBytes();
+
+      assembler.handleControlMessage(EyeEvents.captureStart);
+      assembler.handleControlMessage('SIZE:${jpeg.length}');
+      assembler.handleImageChunk(_chunk(0, jpeg));
+      final result = assembler.handleControlMessage('END:1');
+
+      expect(result, isNull);
     });
 
     test('toCopyString includes every salient field for E02 stall', () {
@@ -251,5 +332,14 @@ Uint8List _chunk(int sequence, List<int> payload) {
   final byteData = ByteData.sublistView(data);
   byteData.setUint16(0, sequence, Endian.little);
   data.setRange(ImagePacketHeader.headerSize, data.length, payload);
+  return data;
+}
+
+Uint8List _chunkV2(int frameId, int sequence, List<int> payload) {
+  final data = Uint8List(ImagePacketHeader.v2HeaderSize + payload.length);
+  final byteData = ByteData.sublistView(data);
+  byteData.setUint16(0, frameId, Endian.little);
+  byteData.setUint16(2, sequence, Endian.little);
+  data.setRange(ImagePacketHeader.v2HeaderSize, data.length, payload);
   return data;
 }

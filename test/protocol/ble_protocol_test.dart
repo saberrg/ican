@@ -107,7 +107,9 @@ void main() {
       expect(EyeProfileIndex.balanced, 1);
       expect(EyeProfileIndex.quality, 2);
       expect(EyeProfileIndex.max, 3);
+      expect(EyeEvents.buttonSingle, 'BUTTON:SINGLE');
       expect(EyeEvents.buttonDouble, 'BUTTON:DOUBLE');
+      expect(EyeEvents.buttonLong, 'BUTTON:LONG');
       expect(EyeEvents.captureStart, 'CAPTURE:START');
       expect(EyeEvents.sizePrefix, 'SIZE:');
       expect(EyeEvents.crcPrefix, 'CRC:');

@@ -210,7 +210,7 @@ class SceneDescriptionService extends ChangeNotifier {
   }) async {
     _lastCloudFailure = null;
     _lastBackend = VisionBackend.cloud;
-    await cloudService.setModel(AiModel.flash);
+    await cloudService.setModel(AiModel.pro);
     debugPrint('[SceneDescription] Using explicit backend: cloud');
     try {
       final prompt = const ScenePromptBuilder().build(promptContext);

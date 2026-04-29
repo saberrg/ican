@@ -320,7 +320,7 @@ void main() {
   );
 
   test(
-    'missed Eye heartbeat marks not ready and schedules reconnect',
+    'missed Eye heartbeat marks not ready without forcing disconnect',
     () async {
       SharedPreferences.setMockInitialValues({});
       AppLogService.instance.resetForTesting();
@@ -342,7 +342,8 @@ void main() {
       await BleService.instance.handleEyeHeartbeatTickForTesting();
 
       expect(BleService.instance.eyeReadinessStatus.ready, isFalse);
-      expect(BleService.instance.eyeReconnectPendingForTesting, isTrue);
+      expect(BleService.instance.eyeReconnectPendingForTesting, isFalse);
+      expect(BleService.instance.state, BleConnectionState.connected);
 
       BleService.instance.resetEyeReliabilityForTesting();
 

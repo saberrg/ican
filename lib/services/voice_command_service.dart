@@ -67,6 +67,7 @@ class VoiceCommandService extends ChangeNotifier {
        _voiceTarget = target,
        _listenWindow = listenWindow,
        _pauseWindow = pauseWindow,
+       _usesInjectedProcessor = processor != null,
        _voiceControl =
            processor ??
            _VoiceControlProcessor(VoiceControlService(target: target!)) {
@@ -80,7 +81,8 @@ class VoiceCommandService extends ChangeNotifier {
   final VoiceCommandStt _stt;
   final VoiceCommandBle _ble;
   final AppVoiceControlTarget? _voiceTarget;
-  final VoiceCommandProcessor _voiceControl;
+  final bool _usesInjectedProcessor;
+  VoiceCommandProcessor _voiceControl;
   final Duration _listenWindow;
   final Duration _pauseWindow;
 
@@ -106,6 +108,19 @@ class VoiceCommandService extends ChangeNotifier {
   void attachHomeViewModel(HomeViewModel vm) {
     _voiceTarget?.homeViewModel = vm;
     _voiceTarget?.sceneService = vm.sceneService;
+    if (!_usesInjectedProcessor && _voiceTarget != null) {
+      final target = _voiceTarget;
+      _voiceControl = _VoiceControlProcessor(
+        VoiceControlService(
+          target: target,
+          resolver: VoiceIntentResolver(
+            cloudParser: GeminiVoiceIntentFallbackParser(
+              service: vm.sceneService.cloudService,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void attachRouter(GoRouter router) {}

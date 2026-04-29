@@ -41,25 +41,13 @@ void main() {
       expect(result.spokenConfirmation, 'Speech defaults restored.');
     });
 
-    test('self-tunes safety mode for concise hazard-first output', () async {
-      final result = await service.handleTranscript('only tell me hazards');
-
-      expect(result.success, isTrue);
-      expect(target.promptProfile, PromptProfile.safety);
-      expect(target.detailLevel, DetailLevel.brief);
-      expect(target.liveDetectionVerbosity, LiveDetectionVerbosity.minimal);
-      expect(result.changedState['promptProfile'], 'safety');
-      expect(result.changedState['detailLevel'], 'brief');
-      expect(result.changedState['liveVerbosity'], 'minimal');
-    });
-
     test('switches to offline local vision mode', () async {
       final result = await service.handleTranscript('use local model');
 
       expect(result.success, isTrue);
       expect(target.visionMode, VisionMode.offlineOnly);
       expect(result.changedState['visionMode'], 'offlineOnly');
-      expect(result.spokenConfirmation, 'Local basic vision on.');
+      expect(result.spokenConfirmation, 'Local mode selected.');
     });
 
     test('stop live detection does not match start live detection', () async {
@@ -78,7 +66,6 @@ void main() {
 
       result = await service.handleTranscript('am I clear to walk');
       expect(result.success, isTrue);
-      expect(target.promptProfile, PromptProfile.safety);
       expect(target.detailLevel, DetailLevel.brief);
     });
 
@@ -156,14 +143,6 @@ void main() {
         expect(result.spokenConfirmation, contains("I didn't understand"));
       },
     );
-
-    test('switches to reading-first prompt profile', () async {
-      final result = await service.handleTranscript('read signs first');
-
-      expect(result.success, isTrue);
-      expect(target.promptProfile, PromptProfile.reading);
-      expect(result.spokenConfirmation, contains('visible text first'));
-    });
 
     test(
       'sets live detection verbosity without changing scene detail',
@@ -248,9 +227,6 @@ class _FakeVoiceControlTarget implements VoiceControlTarget {
   DetailLevel detailLevel = DetailLevel.detailed;
 
   @override
-  PromptProfile promptProfile = PromptProfile.balanced;
-
-  @override
   LiveDetectionVerbosity liveDetectionVerbosity =
       LiveDetectionVerbosity.positional;
 
@@ -317,11 +293,6 @@ class _FakeVoiceControlTarget implements VoiceControlTarget {
   @override
   Future<void> setDetailLevel(DetailLevel level) async {
     detailLevel = level;
-  }
-
-  @override
-  Future<void> setPromptProfile(PromptProfile profile) async {
-    promptProfile = profile;
   }
 
   @override

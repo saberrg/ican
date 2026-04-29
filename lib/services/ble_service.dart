@@ -9,6 +9,7 @@ import '../protocol/eye_capture_diagnostics.dart';
 import 'app_log_service.dart';
 import 'device_prefs_service.dart';
 import 'notification_service.dart';
+import 'tts_service.dart';
 
 /// BLE connection status.
 enum BleConnectionState { disconnected, scanning, connecting, connected }
@@ -376,8 +377,9 @@ class BleService extends ChangeNotifier {
   Future<void> connectToEyeByMac(String mac) async {
     if (!_isBleSupported()) return;
     if (_state == BleConnectionState.connecting ||
-        _state == BleConnectionState.connected)
+        _state == BleConnectionState.connected) {
       return;
+    }
     _cancelEyeReconnect();
     _preferredEyeDeviceId = mac;
     debugPrint('[BLE] Connect Eye to $mac...');
@@ -398,8 +400,12 @@ class BleService extends ChangeNotifier {
       await startScan();
     } else {
       try {
+        if (Platform.isIOS) {
+          final recovered = await _connectKnownEyeFromSystemDevices(mac);
+          if (recovered) return;
+        }
         final device = BluetoothDevice.fromId(mac);
-        await connectToEye(device);
+        await connectToEye(device, autoConnect: Platform.isIOS);
       } catch (e) {
         debugPrint('[BLE] Direct connect failed: $e');
         _setState(BleConnectionState.disconnected);
@@ -412,6 +418,34 @@ class BleService extends ChangeNotifier {
           _scheduleEyeReconnect('Direct Eye connect failed: ${e.runtimeType}.');
         }
       }
+    }
+  }
+
+  Future<bool> _connectKnownEyeFromSystemDevices(String? preferredId) async {
+    if (Platform.isWindows) return false;
+    try {
+      final devices = await FlutterBluePlus.systemDevices([
+        Guid(BleServices.eyeServiceUuid),
+      ]);
+      if (devices.isEmpty) return false;
+      BluetoothDevice? preferred;
+      if (preferredId != null) {
+        for (final candidate in devices) {
+          if (candidate.remoteId.str == preferredId) {
+            preferred = candidate;
+            break;
+          }
+        }
+      }
+      final device = preferred ?? devices.first;
+      _recordBleLog(
+        'Eye recovered from systemDevices: ${device.remoteId.str}.',
+      );
+      await connectToEye(device, autoConnect: Platform.isIOS);
+      return true;
+    } catch (e) {
+      _recordBleLog('Eye systemDevices recovery failed: ${e.runtimeType}.');
+      return false;
     }
   }
 
@@ -775,12 +809,13 @@ class BleService extends ChangeNotifier {
             address: mac,
             serviceId: svc,
             characteristicId: BleCharacteristics.obstacleAlertTx,
-          ).listen((data) {
-            if (data.isNotEmpty) {
+          ).listen((dynamic data) {
+            final bytes = List<int>.from(data as Iterable);
+            if (bytes.isNotEmpty) {
               try {
                 // win_ble delivers List<dynamic> — cast to List<int> first
                 final alert = ObstacleAlert.fromBytes(
-                  Uint8List.fromList(List<int>.from(data)),
+                  Uint8List.fromList(bytes),
                 );
                 _obstacleController.add(alert);
               } catch (e) {
@@ -800,9 +835,10 @@ class BleService extends ChangeNotifier {
             address: mac,
             serviceId: svc,
             characteristicId: BleCharacteristics.imuTelemetryTx,
-          ).listen((data) {
-            if (data.isNotEmpty) {
-              onTelemetryReceived(Uint8List.fromList(List<int>.from(data)));
+          ).listen((dynamic data) {
+            final bytes = List<int>.from(data as Iterable);
+            if (bytes.isNotEmpty) {
+              onTelemetryReceived(Uint8List.fromList(bytes));
             }
           });
 
@@ -847,8 +883,9 @@ class BleService extends ChangeNotifier {
     if (!_isBleSupported()) return;
     if (_caneState == BleConnectionState.connecting ||
         _caneState == BleConnectionState.scanning ||
-        _caneState == BleConnectionState.connected)
+        _caneState == BleConnectionState.connected) {
       return;
+    }
     final saved = await DevicePrefsService.instance.getLastCaneDeviceId();
     if (saved != null && saved.isNotEmpty) {
       debugPrint('[BLE Cane] Saved MAC found: $saved — connecting directly.');
@@ -868,8 +905,9 @@ class BleService extends ChangeNotifier {
     }
     if (_caneState == BleConnectionState.connecting ||
         _caneState == BleConnectionState.scanning ||
-        _caneState == BleConnectionState.connected)
+        _caneState == BleConnectionState.connected) {
       return;
+    }
     debugPrint('[BLE Cane] Direct connect to $mac...');
     _setCaneState(BleConnectionState.connecting);
     if (Platform.isWindows) {
@@ -895,8 +933,9 @@ class BleService extends ChangeNotifier {
     if (!_isBleSupported()) return;
     if (_caneState == BleConnectionState.connecting ||
         _caneState == BleConnectionState.scanning ||
-        _caneState == BleConnectionState.connected)
+        _caneState == BleConnectionState.connected) {
       return;
+    }
     debugPrint('[BLE Cane] Starting scan for iCan Cane...');
     _setCaneState(BleConnectionState.scanning);
 
@@ -1005,16 +1044,14 @@ class BleService extends ChangeNotifier {
         normalizedId == fallbackEyeDeviceId;
   }
 
-  bool _isEyeServiceAdvertised(dynamic advertisementData) {
+  bool _isEyeServiceAdvertised(AdvertisementData advertisementData) {
     try {
-      final dynamic serviceUuids = advertisementData.serviceUuids;
-      if (serviceUuids is Iterable) {
-        final targetGuid = Guid(BleServices.eyeServiceUuid);
-        for (final dynamic uuid in serviceUuids) {
-          // Compare as Guid objects to be platform-agnostic
-          if (Guid(uuid.toString()) == targetGuid) {
-            return true;
-          }
+      final serviceUuids = advertisementData.serviceUuids;
+      final targetGuid = Guid(BleServices.eyeServiceUuid);
+      for (final uuid in serviceUuids) {
+        // Compare as Guid objects to be platform-agnostic
+        if (Guid(uuid.toString()) == targetGuid) {
+          return true;
         }
       }
     } catch (_) {}
@@ -1113,6 +1150,9 @@ class BleService extends ChangeNotifier {
     debugPrint('[BLE] Scanning for iCan Eye...');
 
     try {
+      if (await _connectKnownEyeFromSystemDevices(_preferredEyeDeviceId)) {
+        return;
+      }
       await _beginFlutterScan(_FlutterScanOwner.eye);
       await _stopActiveScan();
       _activeFlutterScanOwner = _FlutterScanOwner.eye;
@@ -1166,7 +1206,10 @@ class BleService extends ChangeNotifier {
       );
 
       debugPrint('[BLE] Calling FlutterBluePlus.startScan()');
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
+      await FlutterBluePlus.startScan(
+        withServices: [Guid(BleServices.eyeServiceUuid)],
+        timeout: const Duration(seconds: 15),
+      );
     } catch (e) {
       debugPrint('[BLE] Critical error during startScan: $e');
       _updateEyeReadiness(
@@ -1300,7 +1343,10 @@ class BleService extends ChangeNotifier {
   }
 
   /// Connect to a discovered iCan Eye device.
-  Future<void> connectToEye(BluetoothDevice device) async {
+  Future<void> connectToEye(
+    BluetoothDevice device, {
+    bool autoConnect = false,
+  }) async {
     _setState(BleConnectionState.connecting);
     _updateEyeReadiness(
       BleReadinessPhase.connecting,
@@ -1313,7 +1359,16 @@ class BleService extends ChangeNotifier {
       // here because the Cane scan may be running on the same BLE radio.
       await _scanSub?.cancel();
       _scanSub = null;
-      await device.connect(autoConnect: false);
+      await device.connect(
+        autoConnect: autoConnect,
+        mtu: autoConnect ? null : 512,
+      );
+      if (autoConnect) {
+        await device.connectionState
+            .where((state) => state == BluetoothConnectionState.connected)
+            .first
+            .timeout(const Duration(seconds: 35));
+      }
       _preferredEyeDeviceId = device.remoteId.str;
 
       // Request MTU 517 for faster transfers
@@ -1331,6 +1386,10 @@ class BleService extends ChangeNotifier {
       _connectedDevice = device;
       _connectionSub = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
+          final reason = device.disconnectReason;
+          _recordBleLog(
+            'Eye OS disconnect reported. reason=${reason?.toString() ?? 'unknown'}',
+          );
           unawaited(
             _cancelEyeNotificationSubscriptions(
               disablePlatformNotifications: false,
@@ -1547,6 +1606,12 @@ class BleService extends ChangeNotifier {
       return;
     }
 
+    if (message.startsWith('HAZARD:')) {
+      final hazardText = message.substring('HAZARD:'.length).trim();
+      TtsService.instance.speak(hazardText);
+      return;
+    }
+
     final event = _imageAssembler.handleControlMessage(message);
     if (event != null) {
       if (event.captureStarted || event.sizeArrived) {
@@ -1577,6 +1642,20 @@ class BleService extends ChangeNotifier {
   }
 
   void _handleImageAssemblyEvent(EyeImageAssemblyEvent event) {
+    final nackCommand = event.nackCommand;
+    if (nackCommand != null) {
+      _recordBleLog('Eye frame recovery requested: $nackCommand');
+      unawaited(_sendEyeCommand(nackCommand));
+      _armImageTransferTimeout();
+      return;
+    }
+
+    final ackCommand = event.ackCommand;
+    if (ackCommand != null) {
+      _recordBleLog('Eye frame acknowledged: $ackCommand');
+      unawaited(_sendEyeCommand(ackCommand));
+    }
+
     final diagnostic = event.diagnostic;
     if (diagnostic != null) {
       _imageTimeoutTimer?.cancel();
@@ -1676,7 +1755,12 @@ class BleService extends ChangeNotifier {
 
   void _emitImageTimeoutDiagnostic({String? context}) {
     _cancelCaptureResponseRetryTimer();
-    final diagnostic = _imageAssembler.handleTimeout();
+    final event = _imageAssembler.handleTimeoutEvent();
+    if (event.nackCommand != null) {
+      _handleImageAssemblyEvent(event);
+      return;
+    }
+    final diagnostic = event.diagnostic ?? _imageAssembler.handleTimeout();
     _emitEyeDiagnostic(
       diagnostic,
       context: context ?? 'Image transfer timeout.',
@@ -1783,7 +1867,9 @@ class BleService extends ChangeNotifier {
     _missedEyeHeartbeats++;
     _recordBleLog('Eye heartbeat STATUS missed=$_missedEyeHeartbeats.');
     if (_missedEyeHeartbeats >= 2) {
-      _recordBleLog('Eye heartbeat missed twice; marking Eye not ready.');
+      _recordBleLog(
+        'Eye heartbeat missed twice; marking command path not ready without disconnecting.',
+      );
       _queueFastProfileRecovery('missed STATUS heartbeat');
       _updateEyeReadiness(
         BleReadinessPhase.failed,
@@ -1792,43 +1878,25 @@ class BleService extends ChangeNotifier {
         commandPathReady: false,
         lastError: 'Eye STATUS heartbeat missed twice.',
       );
-      await _forceEyeReconnect('Eye STATUS heartbeat missed twice.');
+      try {
+        final device = _connectedDevice;
+        if (!Platform.isWindows && device != null) {
+          await _discoverEyeServices(device);
+        }
+        if (sendCommand) {
+          await requestEyeStatus();
+        }
+      } catch (e) {
+        _recordBleLog(
+          'Eye heartbeat service refresh failed; waiting for OS disconnect. error=${e.runtimeType}',
+        );
+      }
       return;
     }
 
     if (sendCommand) {
       await requestEyeStatus();
     }
-  }
-
-  Future<void> _forceEyeReconnect(String reason) async {
-    _stopEyeHeartbeat();
-    await _cancelEyeNotificationSubscriptions(
-      disablePlatformNotifications: false,
-    );
-    if (Platform.isWindows) {
-      final mac = _connectedWindowsMac;
-      _connectedWindowsMac = null;
-      if (mac != null) {
-        try {
-          await WinBle.disconnect(mac);
-        } catch (e) {
-          debugPrint('[BLE] Eye reconnect WinBle disconnect failed: $e');
-        }
-      }
-    } else {
-      final device = _connectedDevice;
-      _connectedDevice = null;
-      if (device != null) {
-        try {
-          await device.disconnect();
-        } catch (e) {
-          debugPrint('[BLE] Eye reconnect disconnect failed: $e');
-        }
-      }
-    }
-    _setState(BleConnectionState.disconnected);
-    _scheduleEyeReconnect(reason, initialDelay: Duration.zero);
   }
 
   Future<void> _handleCaptureResponseTimeout() async {
@@ -2228,6 +2296,7 @@ class BleService extends ChangeNotifier {
         message.startsWith(EyeEvents.statusPrefix) ||
         message.startsWith(EyeEvents.profileSetPrefix) ||
         message == EyeEvents.captureStart ||
+        message.startsWith(EyeEvents.framePrefix) ||
         message.startsWith(EyeEvents.sizePrefix) ||
         message.startsWith(EyeEvents.crcPrefix) ||
         message.startsWith(EyeEvents.endPrefix) ||
@@ -2371,22 +2440,14 @@ class BleService extends ChangeNotifier {
       _winImageSub?.cancel();
       _winCaptureSub?.cancel();
       _winInstantTextSub?.cancel();
-      if (_connectedWindowsMac != null) {
-        WinBle.disconnect(_connectedWindowsMac!).catchError((e) {
-          debugPrint('[BLE] Error disconnecting on dispose: $e');
-        });
-      }
     } else {
       _stopActiveScan().catchError((e) {
         debugPrint('[BLE] Error stopping scan on dispose: $e');
       });
       _cancelEyeNotificationSubscriptions(
-        disablePlatformNotifications: true,
+        disablePlatformNotifications: false,
       ).catchError((Object e) {
         debugPrint('[BLE] Error canceling Eye notifications: $e');
-      });
-      _connectedDevice?.disconnect().catchError((e) {
-        debugPrint('[BLE] Error disconnecting Eye on dispose: $e');
       });
       _connectionSub?.cancel();
     }

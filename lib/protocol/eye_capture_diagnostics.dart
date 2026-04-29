@@ -167,6 +167,8 @@ class EyeImageAssemblyEvent {
   const EyeImageAssemblyEvent._({
     this.image,
     this.diagnostic,
+    this.ackCommand,
+    this.nackCommand,
     this.captureStarted = false,
     this.sizeArrived = false,
     this.progress = false,
@@ -178,6 +180,14 @@ class EyeImageAssemblyEvent {
 
   factory EyeImageAssemblyEvent.failure(EyeCaptureDiagnostic diagnostic) {
     return EyeImageAssemblyEvent._(diagnostic: diagnostic);
+  }
+
+  factory EyeImageAssemblyEvent.ack(String command) {
+    return EyeImageAssemblyEvent._(ackCommand: command, progress: true);
+  }
+
+  factory EyeImageAssemblyEvent.nack(String command) {
+    return EyeImageAssemblyEvent._(nackCommand: command, progress: true);
   }
 
   factory EyeImageAssemblyEvent.captureStarted() {
@@ -194,38 +204,42 @@ class EyeImageAssemblyEvent {
 
   final Uint8List? image;
   final EyeCaptureDiagnostic? diagnostic;
+  final String? ackCommand;
+  final String? nackCommand;
   final bool captureStarted;
   final bool sizeArrived;
   final bool progress;
 }
 
 class EyeImageTransferAssembler {
-  final List<int> _imageBuffer = [];
-  final Set<int> _seenSequenceNumbers = {};
+  final Map<int, Uint8List> _chunks = {};
 
   bool _captureStarted = false;
   bool _captureCommandSent = false;
   bool _sizeArrived = false;
   bool _endArrived = false;
   bool _frameEmitted = false;
+  int? _activeFrameId;
   int _expectedImageSize = 0;
-  int _lastSequenceNumber = -1;
+  int? _expectedChunks;
   int _missedChunks = 0;
   int _duplicateChunks = 0;
+  int _nackRounds = 0;
+  bool _allowChunkReplacement = false;
   String? _expectedCrc;
 
   bool get hasActiveTransfer =>
       _captureCommandSent ||
       _captureStarted ||
       _sizeArrived ||
-      _imageBuffer.isNotEmpty;
+      _chunks.isNotEmpty;
 
   EyeTransferTimeoutStage get currentTimeoutStage {
     if (!_captureStarted && !_sizeArrived) {
       return EyeTransferTimeoutStage.awaitingCaptureStart;
     }
     if (!_sizeArrived) return EyeTransferTimeoutStage.awaitingSize;
-    if (_imageBuffer.isEmpty) return EyeTransferTimeoutStage.awaitingImageData;
+    if (_chunks.isEmpty) return EyeTransferTimeoutStage.awaitingImageData;
     return EyeTransferTimeoutStage.awaitingEnd;
   }
 
@@ -235,17 +249,19 @@ class EyeImageTransferAssembler {
   }
 
   void reset() {
-    _imageBuffer.clear();
-    _seenSequenceNumbers.clear();
+    _chunks.clear();
     _captureStarted = false;
     _captureCommandSent = false;
     _sizeArrived = false;
     _endArrived = false;
     _frameEmitted = false;
+    _activeFrameId = null;
     _expectedImageSize = 0;
-    _lastSequenceNumber = -1;
+    _expectedChunks = null;
     _missedChunks = 0;
     _duplicateChunks = 0;
+    _nackRounds = 0;
+    _allowChunkReplacement = false;
     _expectedCrc = null;
   }
 
@@ -257,17 +273,24 @@ class EyeImageTransferAssembler {
       return EyeImageAssemblyEvent.captureStarted();
     }
 
+    if (message.startsWith(EyeEvents.framePrefix)) {
+      final frame = _parseFrameMessage(message);
+      if (frame == null) return null;
+      _beginProtocolV2Frame(frame);
+      return _tryCompleteFrame() ?? EyeImageAssemblyEvent.sizeArrived();
+    }
+
     if (message.startsWith(EyeEvents.sizePrefix)) {
       final newSize =
           int.tryParse(message.substring(EyeEvents.sizePrefix.length)) ?? 0;
       if (_sizeArrived &&
-          _imageBuffer.isNotEmpty &&
+          _chunks.isNotEmpty &&
           newSize == _expectedImageSize &&
           !_frameEmitted) {
         return null;
       }
       _beginSizedFrame(newSize);
-      return EyeImageAssemblyEvent.sizeArrived();
+      return _tryCompleteFrame() ?? EyeImageAssemblyEvent.sizeArrived();
     }
 
     if (message.startsWith(EyeEvents.crcPrefix)) {
@@ -275,13 +298,20 @@ class EyeImageTransferAssembler {
       _expectedCrc = _normalizeCrc(
         message.substring(EyeEvents.crcPrefix.length),
       );
-      return null;
+      return _tryCompleteFrame();
     }
 
     if (message.startsWith(EyeEvents.endPrefix)) {
       if (!hasActiveTransfer) return null;
       _endArrived = true;
-      return _completeFrame();
+      final parsed = _parseEndMessage(message);
+      if (parsed.frameId != null && !_isCurrentFrame(parsed.frameId)) {
+        return null;
+      }
+      if (parsed.chunkCount != null) {
+        _expectedChunks = parsed.chunkCount;
+      }
+      return _tryCompleteFrame() ?? _buildNackEventIfPossible();
     }
 
     if (message.startsWith(EyeEvents.errorPrefix)) {
@@ -297,23 +327,29 @@ class EyeImageTransferAssembler {
       return null;
     }
 
-    final header = ImagePacketHeader.fromBytes(data);
-    final payload = data.sublist(ImagePacketHeader.headerSize);
+    final isProtocolV2 =
+        _activeFrameId != null && data.length > ImagePacketHeader.v2HeaderSize;
+    final header = isProtocolV2
+        ? ImagePacketHeader.v2FromBytes(data)
+        : ImagePacketHeader.fromBytes(data);
+    if (header.frameId != null && !_isCurrentFrame(header.frameId)) {
+      return null;
+    }
 
-    if (_seenSequenceNumbers.contains(header.sequenceNumber)) {
+    final headerSize = header.frameId == null
+        ? ImagePacketHeader.headerSize
+        : ImagePacketHeader.v2HeaderSize;
+    final payload = Uint8List.fromList(data.sublist(headerSize));
+
+    if (_chunks.containsKey(header.sequenceNumber) && !_allowChunkReplacement) {
       _duplicateChunks++;
       return null;
     }
 
-    _seenSequenceNumbers.add(header.sequenceNumber);
-    if (_lastSequenceNumber != -1 &&
-        header.sequenceNumber != _lastSequenceNumber + 1) {
-      _missedChunks++;
-    }
-    _lastSequenceNumber = header.sequenceNumber;
-    _imageBuffer.addAll(payload);
+    _chunks[header.sequenceNumber] = payload;
+    _updateMissedChunkCount();
 
-    return EyeImageAssemblyEvent.progress();
+    return _tryCompleteFrame() ?? EyeImageAssemblyEvent.progress();
   }
 
   EyeCaptureDiagnostic handleTimeout() {
@@ -326,6 +362,12 @@ class EyeImageTransferAssembler {
     );
     reset();
     return diagnostic;
+  }
+
+  EyeImageAssemblyEvent handleTimeoutEvent({int maxNackRounds = 3}) {
+    final nackEvent = _buildNackEventIfPossible(maxRounds: maxNackRounds);
+    if (nackEvent != null) return nackEvent;
+    return EyeImageAssemblyEvent.failure(handleTimeout());
   }
 
   static String crc32Hex(List<int> data) {
@@ -347,7 +389,7 @@ class EyeImageTransferAssembler {
   void _beginSizedFrame(int size) {
     final hadCaptureStart = _captureStarted;
     final hadCaptureCommand = _captureCommandSent;
-    if (!_sizeArrived && _imageBuffer.isNotEmpty && !_frameEmitted) {
+    if (!_sizeArrived && _chunks.isNotEmpty && !_frameEmitted) {
       _captureStarted = hadCaptureStart;
       _captureCommandSent = hadCaptureCommand;
       _sizeArrived = true;
@@ -361,10 +403,41 @@ class EyeImageTransferAssembler {
     _expectedImageSize = size;
   }
 
-  EyeImageAssemblyEvent? _completeFrame() {
-    if (_frameEmitted) return null;
+  void _beginProtocolV2Frame(_FrameMessage frame) {
+    final hadCaptureStart = _captureStarted;
+    final hadCaptureCommand = _captureCommandSent;
+    reset();
+    _captureStarted = hadCaptureStart;
+    _captureCommandSent = hadCaptureCommand;
+    _sizeArrived = true;
+    _activeFrameId = frame.frameId;
+    _expectedImageSize = frame.bytes;
+    _expectedCrc = _normalizeCrc(frame.crcHex);
+    _expectedChunks = frame.chunks;
+  }
 
-    final bytes = Uint8List.fromList(_imageBuffer);
+  EyeImageAssemblyEvent? _tryCompleteFrame() {
+    if (_frameEmitted) return null;
+    if (!_sizeArrived || _expectedImageSize <= 0) return null;
+    if (_expectedChunks != null && _chunks.length < _expectedChunks!) {
+      return null;
+    }
+    if (_expectedCrc == null) {
+      return null;
+    }
+
+    final bytes = _orderedBytes();
+    if (bytes.length < _expectedImageSize) {
+      return null;
+    }
+    if (bytes.length > _expectedImageSize) {
+      final diagnostic = _buildDiagnostic(
+        EyeCaptureDiagnosticCode.corruptOrIncompleteJpeg,
+      );
+      reset();
+      return EyeImageAssemblyEvent.failure(diagnostic);
+    }
+
     final jpegMagicValid =
         bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xd8;
     final jpegEndValid =
@@ -372,11 +445,7 @@ class EyeImageTransferAssembler {
         bytes[bytes.length - 2] == 0xff &&
         bytes[bytes.length - 1] == 0xd9;
 
-    if (!_sizeArrived ||
-        _expectedImageSize <= 0 ||
-        bytes.length != _expectedImageSize ||
-        !jpegMagicValid ||
-        !jpegEndValid) {
+    if (!jpegMagicValid || !jpegEndValid) {
       final diagnostic = _buildDiagnostic(
         EyeCaptureDiagnosticCode.corruptOrIncompleteJpeg,
         jpegMagicValid: jpegMagicValid,
@@ -386,25 +455,55 @@ class EyeImageTransferAssembler {
       return EyeImageAssemblyEvent.failure(diagnostic);
     }
 
-    final expectedCrc = _expectedCrc;
-    if (expectedCrc != null) {
-      final actualCrc = crc32Hex(bytes);
-      if (actualCrc != expectedCrc) {
-        final diagnostic = _buildDiagnostic(
-          EyeCaptureDiagnosticCode.crcMismatch,
-          jpegMagicValid: jpegMagicValid,
-          jpegEndValid: jpegEndValid,
-          actualCrc: actualCrc,
-        );
-        reset();
-        return EyeImageAssemblyEvent.failure(diagnostic);
-      }
+    final actualCrc = crc32Hex(bytes);
+    if (actualCrc != _expectedCrc) {
+      final nack = _buildNackEventIfPossible(forceAllChunks: true);
+      if (nack != null) return nack;
+      final diagnostic = _buildDiagnostic(
+        EyeCaptureDiagnosticCode.crcMismatch,
+        jpegMagicValid: jpegMagicValid,
+        jpegEndValid: jpegEndValid,
+        actualCrc: actualCrc,
+      );
+      reset();
+      return EyeImageAssemblyEvent.failure(diagnostic);
     }
 
     _frameEmitted = true;
+    final frameId = _activeFrameId;
     final image = Uint8List.fromList(bytes);
     reset();
+    if (frameId != null) {
+      return EyeImageAssemblyEvent._(
+        image: image,
+        ackCommand: EyeCommands.ackFrame(frameId),
+      );
+    }
     return EyeImageAssemblyEvent.image(image);
+  }
+
+  EyeImageAssemblyEvent? _buildNackEventIfPossible({
+    int maxRounds = 3,
+    bool forceAllChunks = false,
+  }) {
+    final frameId = _activeFrameId;
+    final expectedChunks = _expectedChunks;
+    if (frameId == null || expectedChunks == null || expectedChunks <= 0) {
+      return null;
+    }
+    if (_nackRounds >= maxRounds) return null;
+
+    final ranges = forceAllChunks
+        ? _rangesForAllChunks(expectedChunks)
+        : _missingRanges(expectedChunks);
+    if (ranges.isEmpty) return null;
+
+    _nackRounds++;
+    if (forceAllChunks) {
+      _allowChunkReplacement = true;
+    }
+    _updateMissedChunkCount();
+    return EyeImageAssemblyEvent.nack(EyeCommands.nackFrame(frameId, ranges));
   }
 
   EyeCaptureDiagnostic _diagnosticForFirmwareError(String error) {
@@ -467,7 +566,7 @@ class EyeImageTransferAssembler {
     int? expectedBytesOverride,
     String? firmwareAbortReason,
   }) {
-    final bytes = _imageBuffer;
+    final bytes = _orderedBytes();
     final computedMagicValid =
         bytes.length >= 2 && bytes[0] == 0xff && bytes[1] == 0xd8;
     final computedEndValid =
@@ -480,8 +579,8 @@ class EyeImageTransferAssembler {
       captureStarted: _captureStarted,
       sizeArrived: _sizeArrived,
       expectedBytes: expectedBytesOverride ?? _expectedImageSize,
-      receivedBytes: _imageBuffer.length,
-      uniqueChunks: _seenSequenceNumbers.length,
+      receivedBytes: bytes.length,
+      uniqueChunks: _chunks.length,
       duplicateChunks: _duplicateChunks,
       missedChunks: _missedChunks,
       endArrived: _endArrived,
@@ -505,4 +604,130 @@ class EyeImageTransferAssembler {
         : trimmed;
     return withoutPrefix.padLeft(8, '0');
   }
+
+  bool _isCurrentFrame(int? frameId) {
+    return frameId == null ||
+        _activeFrameId == null ||
+        frameId == _activeFrameId;
+  }
+
+  Uint8List _orderedBytes() {
+    if (_chunks.isEmpty) return Uint8List(0);
+    final keys = _chunks.keys.toList()..sort();
+    final buffer = BytesBuilder(copy: false);
+    for (final key in keys) {
+      buffer.add(_chunks[key]!);
+    }
+    return buffer.takeBytes();
+  }
+
+  void _updateMissedChunkCount() {
+    final expectedChunks = _expectedChunks;
+    if (expectedChunks != null) {
+      _missedChunks = _missingSequences(expectedChunks).length;
+      return;
+    }
+    if (_chunks.isEmpty) {
+      _missedChunks = 0;
+      return;
+    }
+    final keys = _chunks.keys.toList()..sort();
+    var gaps = 0;
+    for (var i = 1; i < keys.length; i++) {
+      final delta = keys[i] - keys[i - 1];
+      if (delta > 1) gaps += delta - 1;
+    }
+    _missedChunks = gaps;
+  }
+
+  List<int> _missingSequences(int expectedChunks) {
+    final missing = <int>[];
+    for (var seq = 0; seq < expectedChunks; seq++) {
+      if (!_chunks.containsKey(seq)) missing.add(seq);
+    }
+    return missing;
+  }
+
+  String _missingRanges(int expectedChunks) {
+    return _rangeString(_missingSequences(expectedChunks));
+  }
+
+  String _rangesForAllChunks(int expectedChunks) {
+    return expectedChunks <= 0
+        ? ''
+        : expectedChunks == 1
+        ? '0'
+        : '0-${expectedChunks - 1}';
+  }
+
+  static String _rangeString(List<int> values) {
+    if (values.isEmpty) return '';
+    final ranges = <String>[];
+    var start = values.first;
+    var previous = start;
+    for (final value in values.skip(1)) {
+      if (value == previous + 1) {
+        previous = value;
+        continue;
+      }
+      ranges.add(start == previous ? '$start' : '$start-$previous');
+      start = value;
+      previous = value;
+    }
+    ranges.add(start == previous ? '$start' : '$start-$previous');
+    return ranges.join(',');
+  }
+
+  static _FrameMessage? _parseFrameMessage(String message) {
+    final parts = message.split(':');
+    if (parts.length < 5) return null;
+    final frameId = int.tryParse(parts[1]);
+    final bytes = int.tryParse(parts[2]);
+    final chunks = int.tryParse(parts[4]);
+    final crc = parts[3];
+    if (frameId == null || bytes == null || chunks == null || crc.isEmpty) {
+      return null;
+    }
+    return _FrameMessage(
+      frameId: frameId,
+      bytes: bytes,
+      crcHex: crc,
+      chunks: chunks,
+    );
+  }
+
+  static _EndMessage _parseEndMessage(String message) {
+    final parts = message.split(':');
+    if (parts.length >= 3) {
+      return _EndMessage(
+        frameId: int.tryParse(parts[1]),
+        chunkCount: int.tryParse(parts[2]),
+      );
+    }
+    return _EndMessage(
+      frameId: null,
+      chunkCount: parts.length >= 2 ? int.tryParse(parts[1]) : null,
+    );
+  }
+}
+
+class _FrameMessage {
+  const _FrameMessage({
+    required this.frameId,
+    required this.bytes,
+    required this.crcHex,
+    required this.chunks,
+  });
+
+  final int frameId;
+  final int bytes;
+  final String crcHex;
+  final int chunks;
+}
+
+class _EndMessage {
+  const _EndMessage({required this.frameId, required this.chunkCount});
+
+  final int? frameId;
+  final int? chunkCount;
 }

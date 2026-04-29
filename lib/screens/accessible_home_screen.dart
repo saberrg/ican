@@ -7,11 +7,13 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
 
 import '../core/theme.dart';
+import '../main.dart' show voiceCommandService;
 import '../models/home_view_model.dart';
 import '../models/settings_provider.dart';
 import '../services/ble_service.dart';
 import '../services/device_prefs_service.dart';
 import '../services/scene_description_service.dart';
+import '../services/voice_command_service.dart';
 import '../widgets/accessible_button.dart';
 import '../widgets/hazard_alert_banner.dart';
 
@@ -59,6 +61,7 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
   Widget build(BuildContext context) {
     final vm = context.watch<HomeViewModel>();
     final settings = vm.settingsProvider;
+    final voiceCommands = _voiceCommandsOrNull();
     final topPadding = MediaQuery.of(context).padding.top;
 
     return Scaffold(
@@ -78,9 +81,11 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
                 children: [
                   const _HomeHeader(),
                   const SizedBox(height: AppSpacing.sm),
-                  _StatusBand(vm: vm),
+                  _StatusBand(vm: vm, voiceCommands: voiceCommands),
                   const SizedBox(height: AppSpacing.sm),
                   _ModeChips(vm: vm, settings: settings),
+                  const SizedBox(height: AppSpacing.sm),
+                  _VoiceCommandPanel(service: voiceCommands),
                   if (settings.lastChangeSummary.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.sm),
                     _TuningFeedbackBanner(summary: settings.lastChangeSummary),
@@ -106,6 +111,14 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
         ],
       ),
     );
+  }
+
+  VoiceCommandService? _voiceCommandsOrNull() {
+    try {
+      return voiceCommandService;
+    } catch (_) {
+      return null;
+    }
   }
 }
 
@@ -147,9 +160,10 @@ class _HomeHeader extends StatelessWidget {
 }
 
 class _StatusBand extends StatelessWidget {
-  const _StatusBand({required this.vm});
+  const _StatusBand({required this.vm, required this.voiceCommands});
 
   final HomeViewModel vm;
+  final VoiceCommandService? voiceCommands;
 
   @override
   Widget build(BuildContext context) {
@@ -181,10 +195,11 @@ class _StatusBand extends StatelessWidget {
                 icon: Icons.camera_alt_outlined,
                 tone: _eyeStatusTone(vm),
               ),
-              const _StatusTile(
+              _StatusTile(
                 label: 'Voice',
-                value: 'Ready',
-                semanticLabel: 'Voice command status. Ready.',
+                value: _voiceStatusLabel(voiceCommands),
+                semanticLabel:
+                    'Voice command status. ${_voiceStatusLabel(voiceCommands)}.',
                 icon: Icons.graphic_eq,
                 tone: _StatusTone.neutral,
               ),
@@ -245,6 +260,14 @@ class _StatusBand extends StatelessWidget {
     return mode == VisionMode.offlineOnly
         ? _StatusTone.neutral
         : _StatusTone.good;
+  }
+
+  static String _voiceStatusLabel(VoiceCommandService? service) {
+    return switch (service?.state) {
+      VoiceCommandState.listening => 'Listening',
+      VoiceCommandState.processing => 'Processing',
+      _ => 'Ready',
+    };
   }
 }
 
@@ -331,56 +354,98 @@ class _ModeChips extends StatelessWidget {
 
     return Semantics(
       label:
-          'Active modes. Focus ${_focusLabel(settings.promptProfile)}. Vision ${_visionLabel(vm.visionMode)}.',
+          'Active mode. ${vm.visionControlMode.label}. Cloud, Local, and Live are available.',
       child: ExcludeSemantics(
         child: Wrap(
           spacing: AppSpacing.xs,
           runSpacing: AppSpacing.xs,
           children: [
             _ModeChip(
-              label: 'Balanced',
-              active: settings.promptProfile == PromptProfile.balanced,
+              label: 'Cloud',
+              active: vm.visionControlMode == VisionControlMode.cloud,
             ),
             _ModeChip(
-              label: 'Safety',
-              active: settings.promptProfile == PromptProfile.safety,
-            ),
-            _ModeChip(
-              label: 'Reading',
-              active: settings.promptProfile == PromptProfile.reading,
-            ),
-            _ModeChip(
-              label: vm.visionMode == VisionMode.offlineOnly
-                  ? 'Cloud off'
-                  : 'Cloud first',
-              active: vm.visionMode != VisionMode.offlineOnly,
-            ),
-            _ModeChip(
-              label: localReady ? 'Local ready' : 'Local unavailable',
-              active: vm.visionMode == VisionMode.offlineOnly,
+              label: localReady ? 'Local' : 'Local unavailable',
+              active: vm.visionControlMode == VisionControlMode.local,
               unavailable: !localReady,
+            ),
+            _ModeChip(
+              label: vm.liveVisionActive ? 'Live running' : 'Live',
+              active:
+                  vm.visionControlMode == VisionControlMode.live ||
+                  vm.liveVisionActive,
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  static String _focusLabel(PromptProfile profile) {
-    return switch (profile) {
-      PromptProfile.balanced => 'Balanced',
-      PromptProfile.safety => 'Safety',
-      PromptProfile.navigation => 'Navigation',
-      PromptProfile.reading => 'Reading',
-    };
-  }
+class _VoiceCommandPanel extends StatelessWidget {
+  const _VoiceCommandPanel({required this.service});
 
-  static String _visionLabel(VisionMode mode) {
-    return switch (mode) {
-      VisionMode.auto => 'Cloud first auto',
-      VisionMode.cloudOnly => 'Cloud only',
-      VisionMode.offlineOnly => 'Local only',
-    };
+  final VoiceCommandService? service;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = service;
+    final state = current?.state ?? VoiceCommandState.idle;
+    final partial = current?.partialText ?? '';
+    final result = current?.lastResult ?? '';
+    final listening = state == VoiceCommandState.listening;
+    final processing = state == VoiceCommandState.processing;
+    final label = listening
+        ? 'Listening'
+        : processing
+        ? 'Processing voice'
+        : 'Listen';
+    final body = partial.isNotEmpty
+        ? partial
+        : result.isNotEmpty
+        ? result
+        : 'Double press the Eye or tap Listen.';
+
+    return Semantics(
+      liveRegion: true,
+      label: 'Voice command. $label. $body',
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceCardLight,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: ExcludeSemantics(
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  body,
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    color: AppColors.textOnLight,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              SizedBox(
+                width: 136,
+                child: ElevatedButton.icon(
+                  onPressed: current == null || state != VoiceCommandState.idle
+                      ? null
+                      : () => unawaited(current.activateVoiceCommand()),
+                  icon: Icon(listening ? Icons.graphic_eq : Icons.mic),
+                  label: Text(label, textAlign: TextAlign.center),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -652,71 +717,112 @@ class _FlowActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final actionLabel = switch (vm.visionControlMode) {
+      VisionControlMode.cloud =>
+        vm.isProcessing ? 'Cloud Running' : 'Run Cloud',
+      VisionControlMode.local =>
+        vm.isProcessing ? 'Local Running' : 'Run Local',
+      VisionControlMode.live =>
+        vm.liveVisionActive ? 'Stop Live' : 'Start Live',
+    };
+    final actionHint = switch (vm.visionControlMode) {
+      VisionControlMode.cloud =>
+        'Takes one Eye photo and describes it with cloud vision',
+      VisionControlMode.local =>
+        'Takes one Eye photo and describes it on this iPhone when local vision is healthy',
+      VisionControlMode.live =>
+        vm.liveVisionActive
+            ? 'Stops live Eye detection'
+            : 'Starts firmware-driven live Eye detection',
+    };
+    final enabled = vm.visionControlMode == VisionControlMode.live
+        ? vm.isEyeConnected
+        : vm.canDescribe;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AccessibleButton(
-          label: vm.isProcessing ? 'Describe Running' : 'Describe',
-          hint: 'Takes one Eye photo and describes it with cloud-first vision',
-          subtitle: 'Cloud first with demo-safe local checks',
-          onPressed: vm.canCloudDescribe ? vm.describeCloudNow : null,
+          label: actionLabel,
+          hint: actionHint,
+          subtitle: 'Eye button: single runs, long cycles, double listens',
+          onPressed: enabled ? vm.executeActiveVisionMode : null,
         ),
         const SizedBox(height: AppSpacing.sm),
-        _SecondaryActionButton(
-          label: vm.isProcessing ? 'Offline Running' : 'Offline Describe',
-          hint: 'Takes one Eye photo and describes it on this iPhone',
+        _ModeButtonRow(vm: vm),
+      ],
+    );
+  }
+}
+
+class _ModeButtonRow extends StatelessWidget {
+  const _ModeButtonRow({required this.vm});
+
+  final HomeViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: AppSpacing.xs,
+      runSpacing: AppSpacing.xs,
+      alignment: WrapAlignment.center,
+      children: [
+        _ModeSelectButton(
+          label: 'Cloud',
+          icon: Icons.cloud_outlined,
+          selected: vm.visionControlMode == VisionControlMode.cloud,
+          onPressed: () =>
+              unawaited(vm.setVisionControlMode(VisionControlMode.cloud)),
+        ),
+        _ModeSelectButton(
+          label: 'Local',
           icon: Icons.phone_iphone,
-          onPressed: vm.canOfflineDescribe ? vm.describeOfflineNow : null,
+          selected: vm.visionControlMode == VisionControlMode.local,
+          onPressed: () =>
+              unawaited(vm.setVisionControlMode(VisionControlMode.local)),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        _SecondaryActionButton(
-          label: vm.liveVisionActive ? 'Stop Live Detection' : 'Live Detection',
-          hint: vm.liveVisionActive
-              ? 'Stops live Eye detection'
-              : 'Starts firmware-driven live Eye detection',
-          icon: vm.liveVisionActive
-              ? Icons.stop_circle_outlined
-              : Icons.sensors_outlined,
-          onPressed: vm.isEyeConnected
-              ? () {
-                  if (vm.liveVisionActive) {
-                    vm.stopLiveVision();
-                  } else {
-                    vm.startLiveVision();
-                  }
-                }
-              : null,
+        _ModeSelectButton(
+          label: 'Live',
+          icon: Icons.sensors_outlined,
+          selected: vm.visionControlMode == VisionControlMode.live,
+          onPressed: () =>
+              unawaited(vm.setVisionControlMode(VisionControlMode.live)),
         ),
       ],
     );
   }
 }
 
-class _SecondaryActionButton extends StatelessWidget {
-  const _SecondaryActionButton({
+class _ModeSelectButton extends StatelessWidget {
+  const _ModeSelectButton({
     required this.label,
-    required this.hint,
     required this.icon,
+    required this.selected,
     required this.onPressed,
   });
 
   final String label;
-  final String hint;
   final IconData icon;
-  final VoidCallback? onPressed;
+  final bool selected;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      enabled: onPressed != null,
-      label: onPressed == null ? '$label, unavailable' : label,
-      hint: hint,
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        label: Text(label, textAlign: TextAlign.center),
-      ),
+      selected: selected,
+      label: '$label mode',
+      child: selected
+          ? FilledButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon),
+              label: Text(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon),
+              label: Text(label),
+            ),
     );
   }
 }

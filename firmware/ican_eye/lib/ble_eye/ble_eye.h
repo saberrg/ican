@@ -27,6 +27,8 @@ enum EyeCommand : uint8_t {
   EYE_CMD_LIVE_START = 4,
   EYE_CMD_LIVE_STOP = 5,
   EYE_CMD_ABORT = 6,
+  EYE_CMD_ACK_FRAME = 7,
+  EYE_CMD_NACK_FRAME = 8,
 };
 
 /** Parsed command from BLE client. */
@@ -34,6 +36,8 @@ struct EyeCommandData {
   EyeCommand type;
   int profileIndex;   // valid when type == EYE_CMD_PROFILE
   int liveIntervalMs; // valid when type == EYE_CMD_LIVE_START
+  uint16_t frameId;   // valid for ACK_FRAME/NACK_FRAME
+  char nackRanges[80];
 };
 
 // =========================================================================
@@ -89,7 +93,12 @@ const char *getBleEyeLastStreamResult();
  * @param dataLen  Number of payload bytes (capped to MTU-based effective max).
  * @return         Actual bytes of payload sent (used to advance the offset).
  */
-size_t sendImageChunk(uint16_t seqNum, const uint8_t *data, size_t dataLen);
+size_t sendImageChunk(uint16_t frameId, uint16_t seqNum, const uint8_t *data,
+                      size_t dataLen);
+
+void acknowledgeImageFrame(uint16_t frameId);
+
+bool retransmitImageFrameRanges(uint16_t frameId, const char *ranges);
 
 /**
  * High-level: stream an entire JPEG buffer over BLE.

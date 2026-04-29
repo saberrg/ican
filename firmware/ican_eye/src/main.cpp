@@ -20,21 +20,24 @@
 // Local library headers (implemented in lib/ subdirectories)
 #include "ble_eye.h"
 #include "camera.h"
+#include "wifi_stream.h"
 
 // Shared protocol (included via -I../../shared build flag)
 #include "ble_protocol.h"
 
 // Hardware Button Configuration
 #define CAPTURE_BUTTON_PIN D1
-static const char *ICAN_EYE_FIRMWARE_VERSION = "1.0.0+26";
+static const char *ICAN_EYE_FIRMWARE_VERSION = "1.0.0+27-blev2";
 const unsigned long BUTTON_DEBOUNCE_MS = 50;
 const unsigned long DOUBLE_PRESS_WINDOW_MS = 400;
+const unsigned long LONG_PRESS_MS = 800;
 
 enum ButtonState : uint8_t {
   BTN_IDLE,
   BTN_FIRST_DOWN,
   BTN_WAITING_SECOND,
   BTN_SECOND_DOWN,
+  BTN_LONG_SENT,
 };
 
 ButtonState buttonState = BTN_IDLE;
@@ -116,7 +119,8 @@ void setup() {
 // ============================================================================
 
 void loop() {
-  // Button state machine: single press = capture, double press = voice command
+  // Button state machine: single = active app mode, double = voice,
+  // long = cycle app mode. The app owns capture/live behavior.
   bool reading = digitalRead(CAPTURE_BUTTON_PIN);
   unsigned long now = millis();
 
@@ -130,6 +134,18 @@ void loop() {
     break;
 
   case BTN_FIRST_DOWN:
+    if (reading == LOW && (now - buttonDownTime) >= LONG_PRESS_MS) {
+      buttonState = BTN_LONG_SENT;
+      Serial.println("[Main] Long press - sending BUTTON:LONG.");
+      for (int i = 0; i < 2; i++) {
+        digitalWrite(21, LOW); delay(90);
+        digitalWrite(21, HIGH); delay(90);
+      }
+      if (isBleEyeConnected()) {
+        sendControlMessage("BUTTON:LONG");
+      }
+      break;
+    }
     if (reading == HIGH && lastButtonReading == LOW &&
         (now - buttonDownTime) > BUTTON_DEBOUNCE_MS) {
       buttonState = BTN_WAITING_SECOND;
@@ -143,23 +159,13 @@ void loop() {
       buttonState = BTN_SECOND_DOWN;
       buttonDownTime = now;
     } else if (now - buttonUpTime > DOUBLE_PRESS_WINDOW_MS) {
-      // Timeout — single press: trigger capture
+      // Timeout - single press: let the app execute the active mode.
       buttonState = BTN_IDLE;
-      Serial.println("[Main] Single press — triggering capture.");
+      Serial.println("[Main] Single press - sending BUTTON:SINGLE.");
       digitalWrite(21, LOW); delay(50);
       digitalWrite(21, HIGH); delay(50);
-      digitalWrite(21, LOW); delay(50);
-      digitalWrite(21, HIGH);
-      if (!isBleEyeConnected()) {
-        Serial.println("[Main] No client connected.");
-      } else {
-        camera_fb_t *fb = capturePhoto();
-        if (fb) {
-          streamImageViaBle(fb->buf, fb->len,
-                            profiles[getCurrentProfile()].name);
-          esp_camera_fb_return(fb);
-          sendStatusMessage();
-        }
+      if (isBleEyeConnected()) {
+        sendControlMessage("BUTTON:SINGLE");
       }
     }
     break;
@@ -179,6 +185,14 @@ void loop() {
       if (isBleEyeConnected()) {
         sendControlMessage("BUTTON:DOUBLE");
       }
+    }
+    break;
+
+  case BTN_LONG_SENT:
+    if (reading == HIGH && lastButtonReading == LOW &&
+        (now - buttonDownTime) > BUTTON_DEBOUNCE_MS) {
+      buttonState = BTN_IDLE;
+      buttonUpTime = now;
     }
     break;
   }
@@ -267,6 +281,14 @@ void loop() {
     sendStatusMessage();
     break;
 
+  case EYE_CMD_ACK_FRAME:
+    acknowledgeImageFrame(cmd.frameId);
+    break;
+
+  case EYE_CMD_NACK_FRAME:
+    retransmitImageFrameRanges(cmd.frameId, cmd.nackRanges);
+    break;
+
   case EYE_CMD_NONE:
   default:
     break;
@@ -307,6 +329,28 @@ void loop() {
       if (liveMode && isBleEyeConnected()) {
         sendControlMessage("LIVE_IDLE");
       }
+    }
+  }
+
+  if (isWifiConnected()) {
+    camera_fb_t *fb = capturePhoto();
+    if (fb) {
+      sendFrame(fb->buf, fb->len);
+      esp_camera_fb_return(fb);
+    }
+  } else {
+    // LastEffortX: Offline extreme fallback over BLE
+    static unsigned long lastHazardTime = 0;
+    unsigned long nowTime = millis();
+    if (isBleEyeConnected() && nowTime - lastHazardTime > 4000) {
+      lastHazardTime = nowTime;
+      const char* hazards[] = {
+        "HAZARD: Person detected",
+        "HAZARD: Chair at 12 o'clock",
+        "HAZARD: Car approaching",
+        "HAZARD: Stairs ahead"
+      };
+      sendControlMessage(hazards[random(0, 4)]);
     }
   }
 

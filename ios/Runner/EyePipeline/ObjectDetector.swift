@@ -51,7 +51,7 @@ final class ObjectDetector {
         }
         do {
             let config = MLModelConfiguration()
-            config.computeUnits = .all
+            config.computeUnits = .cpuAndNeuralEngine // Explicitly set to ANE
             let mlModel = try MLModel(contentsOf: url, configuration: config)
             vnModel = try VNCoreMLModel(for: mlModel)
             diagnostic = [

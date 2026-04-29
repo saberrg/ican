@@ -52,7 +52,10 @@ class HomeViewModel extends ChangeNotifier {
     Duration processingTimeout = const Duration(seconds: 60),
   }) : _liveController =
            liveDetectionController ??
-           LiveDetectionController(ttsService: ttsService),
+           LiveDetectionController(
+             ttsService: ttsService,
+             verbosityProvider: () => settingsProvider.liveDetectionVerbosity,
+           ),
        _traceStore = traceStore ?? DescribeAttemptTraceStore(),
        _processingTimeoutDuration = processingTimeout {
     _init();
@@ -74,6 +77,7 @@ class HomeViewModel extends ChangeNotifier {
   StreamSubscription<Uint8List>? _imageSub;
   StreamSubscription<EyeCaptureDiagnostic>? _eyeDiagnosticSub;
   StreamSubscription<BleConnectionEvent>? _connectionEventSub;
+  StreamSubscription<String>? _buttonSub;
   StreamSubscription<void>? _captureSub;
   StreamSubscription<TelemetryPacket>? _telemetrySub;
   VoidCallback? _bleListener;
@@ -109,6 +113,7 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   VisionMode get visionMode => sceneService.mode;
+  VisionControlMode get visionControlMode => settingsProvider.visionControlMode;
   bool get isPaused => _isPaused;
   bool get isProcessing => _isProcessing;
   List<DescriptionEntry> get history => List.unmodifiable(_history);
@@ -233,6 +238,14 @@ class HomeViewModel extends ChangeNotifier {
       }
     });
 
+    _buttonSub = BleService.instance.buttonEventStream.listen((event) {
+      if (event == EyeEvents.buttonSingle) {
+        unawaited(executeActiveVisionMode());
+      } else if (event == EyeEvents.buttonLong) {
+        unawaited(cycleVisionControlMode());
+      }
+    });
+
     _announceStartup();
     unawaited(_surfaceUnfinishedDescribeTrace());
     unawaited(refreshOfflineVisionStatus());
@@ -243,8 +256,7 @@ class HomeViewModel extends ChangeNotifier {
     if (_disposed || trace == null) return;
     final message =
         'Previous Describe did not finish. Last stage: ${trace.stage.label}. '
-        'Mode: ${trace.visionMode}. Detail: ${trace.detailLevel}. '
-        'Profile: ${trace.promptProfile}.';
+        'Mode: ${trace.visionMode}. Detail: ${trace.detailLevel}.';
     _setLastDiagnostic(
       trace.lastError == null ? message : '$message ${trace.lastError}',
     );
@@ -333,6 +345,33 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   // ── Public methods ──
+  Future<void> setVisionControlMode(VisionControlMode mode) async {
+    settingsProvider.setVisionControlMode(mode);
+    if (mode == VisionControlMode.cloud) {
+      await sceneService.setMode(VisionMode.cloudOnly);
+    } else if (mode == VisionControlMode.local) {
+      await sceneService.setMode(VisionMode.offlineOnly);
+    }
+  }
+
+  Future<String> cycleVisionControlMode({bool speak = true}) async {
+    final next = settingsProvider.visionControlMode.next;
+    await setVisionControlMode(next);
+    final message = '${next.label} mode selected.';
+    if (speak) {
+      unawaited(ttsService.speak(message));
+    }
+    return message;
+  }
+
+  Future<String> executeActiveVisionMode() async {
+    return switch (settingsProvider.visionControlMode) {
+      VisionControlMode.cloud => _runCloudMode(),
+      VisionControlMode.local => _runLocalMode(),
+      VisionControlMode.live => _toggleLiveMode(),
+    };
+  }
+
   void pauseDescriptions() {
     _isPaused = true;
     ttsService.stop();
@@ -355,6 +394,42 @@ class HomeViewModel extends ChangeNotifier {
   Future<String> describeCloudNow() => _describeNow(_DescribeFlow.cloud);
 
   Future<String> describeOfflineNow() => _describeNow(_DescribeFlow.offline);
+
+  Future<String> _runCloudMode() async {
+    await sceneService.setMode(VisionMode.cloudOnly);
+    return describeCloudNow();
+  }
+
+  Future<String> _runLocalMode() async {
+    await sceneService.setMode(VisionMode.offlineOnly);
+    await refreshOfflineVisionStatus();
+    if (_visionRuntimeStatus?.basicLocalVisionReady != true) {
+      const message =
+          'Local vision is unavailable until Apple Vision passes health checks.';
+      _setLastDiagnostic('Local L02: $message');
+      await ttsService.speak(message);
+      return message;
+    }
+    return describeOfflineNow();
+  }
+
+  Future<String> _toggleLiveMode() async {
+    if (liveVisionActive) {
+      await stopLiveVision();
+      return 'Live mode stopped.';
+    }
+    final readiness = BleService.instance.eyeReadinessStatus;
+    if (!isEyeConnected || !readiness.ready) {
+      const message = 'iCan Eye is not ready for Live mode.';
+      _setLastDiagnostic(message);
+      await ttsService.speak(message);
+      return message;
+    }
+    await startLiveVision();
+    final error = _liveController.lastError;
+    if (liveVisionActive) return 'Live mode started.';
+    return error ?? 'Live mode could not start.';
+  }
 
   Future<String> _describeNow(_DescribeFlow flow) {
     final readiness = BleService.instance.eyeReadinessStatus;
@@ -383,7 +458,7 @@ class HomeViewModel extends ChangeNotifier {
       'Describe requested. readiness=${readiness.phase.name} '
       'ready=${readiness.ready} '
       'requiredChars=${readiness.requiredCharacteristicsReady} '
-      'flow=${flow.name} promptProfile=${settingsProvider.promptProfile.name} '
+      'flow=${flow.name} '
       'hazardSensitivity=${settingsProvider.hazardSensitivity.name}',
     );
     unawaited(
@@ -627,9 +702,7 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   Future<void> _requestEyeProfileAndCapture(_DescribeFlow flow) async {
-    final requestedProfile = _eyeProfileForDescribe(
-      settingsProvider.promptProfile,
-    );
+    const requestedProfile = EyeProfileIndex.balanced;
     final requestedLabel = _eyeProfileLabel(requestedProfile);
     await _updateDescribeTrace(
       DescribePipelineStage.captureRequested,
@@ -637,7 +710,7 @@ class HomeViewModel extends ChangeNotifier {
     );
     _recordDescribeLog(
       'Eye profile requested for Describe: $requestedLabel '
-      'promptProfile=${settingsProvider.promptProfile.name} flow=${flow.name}.',
+      'flow=${flow.name}.',
     );
     try {
       await BleService.instance
@@ -670,15 +743,6 @@ class HomeViewModel extends ChangeNotifier {
 
   ScenePromptContext _scenePromptContext() {
     return ScenePromptContext.fromSettings(settingsProvider);
-  }
-
-  int _eyeProfileForDescribe(PromptProfile profile) {
-    return switch (profile) {
-      PromptProfile.safety => EyeProfileIndex.fast,
-      PromptProfile.balanced ||
-      PromptProfile.navigation ||
-      PromptProfile.reading => EyeProfileIndex.balanced,
-    };
   }
 
   String _eyeProfileLabel(int profileIndex) {
@@ -818,7 +882,6 @@ class HomeViewModel extends ChangeNotifier {
       imageBytes: imageBytes,
       visionMode: sceneService.mode.name,
       detailLevel: settingsProvider.detailLevel.name,
-      promptProfile: settingsProvider.promptProfile.name,
       hazardSensitivity: settingsProvider.hazardSensitivity.name,
     );
     _currentTrace = trace;
@@ -843,7 +906,6 @@ class HomeViewModel extends ChangeNotifier {
       imageBytes: imageBytes,
       visionMode: sceneService.mode.name,
       detailLevel: settingsProvider.detailLevel.name,
-      promptProfile: settingsProvider.promptProfile.name,
       hazardSensitivity: settingsProvider.hazardSensitivity.name,
       requestedEyeProfile: requestedEyeProfile,
       lastError: lastError,
@@ -886,6 +948,7 @@ class HomeViewModel extends ChangeNotifier {
     _imageSub?.cancel();
     _eyeDiagnosticSub?.cancel();
     _connectionEventSub?.cancel();
+    _buttonSub?.cancel();
     _captureSub?.cancel();
     _telemetrySub?.cancel();
     _processingTimeout?.cancel();

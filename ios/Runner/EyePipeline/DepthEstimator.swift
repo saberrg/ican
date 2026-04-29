@@ -45,7 +45,7 @@ final class DepthEstimator {
             if let url = compiledUrl ?? packageUrl {
                 do {
                     let config = MLModelConfiguration()
-                    config.computeUnits = .all   // Neural Engine preferred
+                    config.computeUnits = .cpuAndNeuralEngine // Explicitly set to ANE
                     let mlModel = try MLModel(contentsOf: url, configuration: config)
                     vnModel = try VNCoreMLModel(for: mlModel)
                     diagnostic = [
