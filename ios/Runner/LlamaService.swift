@@ -596,8 +596,12 @@ final class LlamaService {
     }
 
     private static func availableMemoryBytes() -> Int {
-        let bytes = os_proc_available_memory()
-        return Int(min(bytes, UInt64(Int.max)))
+        let bytes: UInt64 = os_proc_available_memory()
+        let maxIntBytes = UInt64(Int.max)
+        if bytes > maxIntBytes {
+            return Int.max
+        }
+        return Int(bytes)
     }
 
     private static func deviceModelIdentifier() -> String {
