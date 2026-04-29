@@ -5,17 +5,21 @@ import UIKit
 /// Wraps Apple Vision framework APIs for on-device image analysis.
 /// Runs OCR, scene classification, and person detection in parallel on the Neural Engine.
 final class VisionService {
+    private static let maxVisionDimension: CGFloat = 1600
 
     /// Analyze a JPEG image using Apple Vision framework.
     /// Returns structured results: OCR text, scene classification, and person count.
     static func analyze(jpegData: Data) async -> [String: Any] {
-        guard let cgImage = UIImage(data: jpegData)?.cgImage else {
-            return ["error": "Failed to decode JPEG image"]
+        let prepared = prepareImageForVision(jpegData: jpegData)
+        guard let cgImage = prepared.cgImage else {
+            NSLog("[VisionService] decode failed")
+            return [
+                "error": prepared.error ?? "Failed to decode image",
+                "diagnostic_stage": "decode"
+            ]
         }
+        var warnings = prepared.warnings
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-
-        // Create all three requests
         let textRequest = VNRecognizeTextRequest()
         textRequest.recognitionLevel = .accurate
         textRequest.usesLanguageCorrection = true
@@ -27,11 +31,28 @@ final class VisionService {
             humanRequest.upperBodyOnly = false
         }
 
-        // Run all requests in parallel on the Neural Engine
         do {
-            try handler.perform([textRequest, classificationRequest, humanRequest])
+            try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([textRequest])
         } catch {
-            return ["error": "Vision analysis failed: \(error.localizedDescription)"]
+            let message = "ocr failed: \(error.localizedDescription)"
+            warnings.append(message)
+            NSLog("[VisionService] %@", message)
+        }
+
+        do {
+            try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([classificationRequest])
+        } catch {
+            let message = "classification failed: \(error.localizedDescription)"
+            warnings.append(message)
+            NSLog("[VisionService] %@", message)
+        }
+
+        do {
+            try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([humanRequest])
+        } catch {
+            let message = "person detection failed: \(error.localizedDescription)"
+            warnings.append(message)
+            NSLog("[VisionService] %@", message)
         }
 
         // --- Extract OCR results ---
@@ -78,6 +99,47 @@ final class VisionService {
             "scene_confidence": sceneConfidence,
             "person_count": personCount,
             "person_rects": personRects,
+            "vision_warnings": warnings,
+            "diagnostic_stage": warnings.isEmpty ? "complete" : "partial",
+            "image_width": cgImage.width,
+            "image_height": cgImage.height,
         ]
+    }
+
+    private static func prepareImageForVision(jpegData: Data) -> (cgImage: CGImage?, warnings: [String], error: String?) {
+        guard let image = UIImage(data: jpegData) else {
+            return (nil, [], "Failed to decode image")
+        }
+
+        guard let originalCGImage = image.cgImage else {
+            return (nil, [], "Decoded image did not contain CGImage data")
+        }
+
+        let width = CGFloat(originalCGImage.width)
+        let height = CGFloat(originalCGImage.height)
+        let longest = max(width, height)
+        if longest <= maxVisionDimension {
+            return (originalCGImage, [], nil)
+        }
+
+        let scale = maxVisionDimension / longest
+        let targetSize = CGSize(
+            width: max(1, floor(width * scale)),
+            height: max(1, floor(height * scale))
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        let resized = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+
+        guard let resizedCGImage = resized.cgImage else {
+            return (originalCGImage, ["downscale failed; used original image"], nil)
+        }
+
+        let warning = "downscaled image from \(Int(width))x\(Int(height)) to \(Int(targetSize.width))x\(Int(targetSize.height))"
+        NSLog("[VisionService] %@", warning)
+        return (resizedCGImage, [warning], nil)
     }
 }

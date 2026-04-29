@@ -484,16 +484,22 @@ class SceneDescriptionService extends ChangeNotifier {
     required String originalUserPrompt,
     bool didRetryAfterTimeout = false,
   }) async {
-    final needsContinuation =
-        firstFinishReason == 'MAX_TOKENS' ||
-        _hasIncompleteFinalSentence(firstText);
-    if (!needsContinuation) {
+    final cleanedFirstText = _stripCloudMetaText(firstText);
+    if (firstFinishReason != 'MAX_TOKENS') {
+      final rescued = _hasIncompleteFinalSentence(cleanedFirstText)
+          ? _rescueTruncatedCloudText(cleanedFirstText)
+          : _CloudRescueResult(cleanedFirstText, 'complete');
+      if (rescued.text.isEmpty) {
+        throw CloudVisionException.malformedResponse(
+          'Gemini completed before a useful spoken sentence was available.',
+        );
+      }
       _recordCloudLog(
-        'Gemini final rescue=not-needed truncated=false '
+        'Gemini final rescue=${rescued.strategy} truncated=false '
         'finishReason=${firstFinishReason ?? "none"}',
       );
       return _CloudDescriptionResult(
-        firstText,
+        rescued.text,
         SceneCompletionMetadata(
           finishReason: firstFinishReason,
           wasTruncated: false,
@@ -505,18 +511,30 @@ class SceneDescriptionService extends ChangeNotifier {
       );
     }
 
+    final needsContinuation = cleanedFirstText.isNotEmpty;
+    if (!needsContinuation) {
+      _recordCloudLog(
+        'Gemini final rescue=empty truncated=true '
+        'finishReason=${firstFinishReason ?? "none"}',
+      );
+      throw CloudVisionException.malformedResponse(
+        'Gemini stopped before a useful spoken sentence was available.',
+      );
+    }
+
     try {
       _recordCloudLog(
         'Gemini retry requested. firstFinishReason=${firstFinishReason ?? "none"} '
-        'firstChars=${firstText.length}',
+        'firstChars=${cleanedFirstText.length}',
       );
       final continuation = await _collectCloudPass(
         imageBytes,
         systemPrompt: systemPrompt,
-        userPrompt: _continuationPrompt(firstText, originalUserPrompt),
+        userPrompt: _continuationPrompt(cleanedFirstText, originalUserPrompt),
         maxOutputTokens: 384,
       );
-      final combined = _joinContinuation(firstText, continuation.text);
+      final cleanedContinuation = _stripCloudMetaText(continuation.text);
+      final combined = _joinContinuation(cleanedFirstText, cleanedContinuation);
       final stillTruncated =
           continuation.finishReason == 'MAX_TOKENS' ||
           _hasIncompleteFinalSentence(combined);
@@ -545,7 +563,7 @@ class SceneDescriptionService extends ChangeNotifier {
         ),
       );
     } on CloudVisionException {
-      final rescued = _rescueTruncatedCloudText(firstText);
+      final rescued = _rescueTruncatedCloudText(cleanedFirstText);
       _recordCloudLog(
         'Gemini continuation failed. rescue=${rescued.strategy} '
         'textChars=${rescued.text.length}',
@@ -570,7 +588,7 @@ class SceneDescriptionService extends ChangeNotifier {
   static String _continuationPrompt(String partialText, String originalPrompt) {
     return [
       originalPrompt,
-      'The previous response may be cut off. Finish as 1-2 complete spoken sentences in plain speech. Do not repeat completed sentences, and do not mention that anything was cut off.',
+      'Continue the visual scene description in 1-2 complete spoken sentences. Use plain speech, add only new visible details, and do not discuss the writing process.',
       'Partial description: "$partialText"',
     ].join('\n\n');
   }
@@ -587,6 +605,37 @@ class SceneDescriptionService extends ChangeNotifier {
     if (a.isEmpty) return b;
     if (b.isEmpty) return a;
     return '$a $b'.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  static String _stripCloudMetaText(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) return '';
+    final kept = <String>[];
+    final matches = RegExp(
+      r'''[^.!?]+(?:[.!?]+["')\]]*)?''',
+    ).allMatches(normalized);
+    for (final match in matches) {
+      final sentence = match.group(0)?.trim() ?? '';
+      if (sentence.isEmpty) continue;
+      if (_isCloudMetaSentence(sentence)) continue;
+      kept.add(sentence);
+    }
+    return kept.join(' ').trim();
+  }
+
+  static bool _isCloudMetaSentence(String sentence) {
+    final lower = sentence.toLowerCase();
+    return RegExp(
+          r'\b(previous|prior)\s+(response|answer|description)\b',
+        ).hasMatch(lower) ||
+        RegExp(
+          r'\b(response|answer|description|output)\s+(was|is|may be|might be|seems)?\s*(cut off|truncated|incomplete)\b',
+        ).hasMatch(lower) ||
+        RegExp(r'\b(token limit|max[_ -]?tokens?)\b').hasMatch(lower) ||
+        RegExp(
+          r'\b(continue|continuation)\s+(the\s+)?(response|answer)\b',
+        ).hasMatch(lower) ||
+        RegExp(r'\bwriting process\b').hasMatch(lower);
   }
 
   static _CloudRescueResult _rescueTruncatedCloudText(String text) {

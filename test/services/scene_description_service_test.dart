@@ -224,6 +224,80 @@ void main() {
       },
     );
 
+    test(
+      'Gemini continuation meta text is stripped from spoken output',
+      () async {
+        await service.setMode(VisionMode.cloudOnly);
+        cloud.responseChunks = [
+          ['A hallway has a clear path ahead.'],
+          ['The description was cut off.'],
+        ];
+        cloud.finishReasons = ['MAX_TOKENS', 'STOP'];
+
+        final chunks = await service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList();
+
+        expect(cloud.streamCalls, 2);
+        expect(chunks.single, 'A hallway has a clear path ahead.');
+        expect(chunks.single.toLowerCase(), isNot(contains('cut off')));
+        expect(
+          cloud.userPrompts.last.toLowerCase(),
+          isNot(contains('cut off')),
+        );
+        expect(
+          cloud.userPrompts.last.toLowerCase(),
+          isNot(contains('previous response')),
+        );
+      },
+    );
+
+    test(
+      'Gemini incomplete useful text without MAX_TOKENS is rescued locally',
+      () async {
+        await service.setMode(VisionMode.cloudOnly);
+        cloud.responseChunks = [
+          ['A hallway has a clear path ahead'],
+        ];
+        cloud.finishReasons = ['STOP'];
+
+        final chunks = await service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList();
+
+        expect(cloud.streamCalls, 1);
+        expect(chunks.single, 'A hallway has a clear path ahead.');
+        expect(service.lastCompletionMetadata.didRetryContinuation, isFalse);
+        expect(service.lastCompletionMetadata.wasTruncated, isFalse);
+      },
+    );
+
+    test(
+      'Gemini MAX_TOKENS continuation joins useful visual text only',
+      () async {
+        await service.setMode(VisionMode.cloudOnly);
+        cloud.responseChunks = [
+          ['A hallway has a clear path ahead.'],
+          ['The previous response hit the token limit. A red chair is ahead.'],
+        ];
+        cloud.finishReasons = ['MAX_TOKENS', 'STOP'];
+
+        final chunks = await service
+            .describeScene(_jpegBytes, systemPrompt: 'Describe safely.')
+            .toList();
+
+        expect(
+          chunks.single,
+          'A hallway has a clear path ahead. A red chair is ahead.',
+        );
+        expect(
+          chunks.single.toLowerCase(),
+          isNot(contains('previous response')),
+        );
+        expect(chunks.single.toLowerCase(), isNot(contains('token limit')));
+      },
+    );
+
     test('Gemini MAX_TOKENS with no punctuation never says cut off', () async {
       await service.setMode(VisionMode.cloudOnly);
       cloud.responseChunks = [
@@ -376,6 +450,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
 class _FakeVertexAiService extends VertexAiService {
   Object? error;
   int streamCalls = 0;
+  final List<String> userPrompts = [];
   List<List<String>> responseChunks = const [
     ['Cloud description.'],
   ];
@@ -393,6 +468,7 @@ class _FakeVertexAiService extends VertexAiService {
     int maxOutputTokens = 500,
   }) async* {
     streamCalls++;
+    userPrompts.add(userPrompt);
     final failure = error;
     if (failure != null) throw failure;
     final index = streamCalls - 1;

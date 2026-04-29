@@ -71,6 +71,63 @@ void main() {
     expect(await service.isAppleVisionAvailable(), isTrue);
   });
 
+  test('malformed native Vision map falls back instead of throwing', () {
+    final analysis = VisionAnalysis.fromMap({
+      'ocr_texts': 'EXIT',
+      'scene_classification': 123,
+      'scene_confidence': '0.42',
+      'person_count': '2',
+      'person_rects': [
+        {'x': '0.1', 'y': 0.2, 'w': null, 'h': 'bad'},
+        'bad rect',
+      ],
+    });
+
+    expect(analysis.ocrTexts, ['EXIT']);
+    expect(analysis.sceneClassification, '123');
+    expect(analysis.sceneConfidence, 0.42);
+    expect(analysis.personCount, 2);
+    expect(analysis.personRects.single, containsPair('x', 0.1));
+    expect(analysis.personRects.single, containsPair('y', 0.2));
+  });
+
+  test(
+    'native Vision PlatformException becomes copyable local diagnostic',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'analyzeWithVision') {
+              throw PlatformException(
+                code: 'VISION_CRASH',
+                message: 'classification failed',
+                details: {'stage': 'classification'},
+              );
+            }
+            throw PlatformException(code: 'unexpected');
+          });
+
+      await expectLater(
+        OnDeviceVisionService().analyzeWithVision(
+          Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
+        ),
+        throwsA(
+          isA<LocalVisionException>()
+              .having((e) => e.code, 'code', 'Local L03')
+              .having(
+                (e) => e.userMessage,
+                'userMessage',
+                contains('VISION_CRASH'),
+              )
+              .having(
+                (e) => e.userMessage,
+                'userMessage',
+                contains('classification'),
+              ),
+        ),
+      );
+    },
+  );
+
   test(
     'reports spatial perception when object and depth models are present',
     () async {

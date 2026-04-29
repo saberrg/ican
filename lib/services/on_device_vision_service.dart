@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'app_log_service.dart';
+
 class LocalVisionException implements Exception {
   const LocalVisionException(this.code, this.message, {this.detail});
 
@@ -24,12 +26,6 @@ class LocalVisionException implements Exception {
 
 /// Results from Apple Vision framework analysis (legacy — still used by VLM path).
 class VisionAnalysis {
-  final List<String> ocrTexts;
-  final String sceneClassification;
-  final double sceneConfidence;
-  final int personCount;
-  final List<Map<String, double>> personRects;
-
   const VisionAnalysis({
     required this.ocrTexts,
     required this.sceneClassification,
@@ -40,26 +36,22 @@ class VisionAnalysis {
 
   factory VisionAnalysis.fromMap(Map<dynamic, dynamic> map) {
     return VisionAnalysis(
-      ocrTexts:
-          (map['ocr_texts'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      sceneClassification:
-          (map['scene_classification'] as String?) ?? 'unknown',
-      sceneConfidence: (map['scene_confidence'] as num?)?.toDouble() ?? 0.0,
-      personCount: (map['person_count'] as int?) ?? 0,
-      personRects:
-          (map['person_rects'] as List<dynamic>?)
-              ?.map(
-                (r) => (r as Map<dynamic, dynamic>).map(
-                  (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
-                ),
-              )
-              .toList() ??
-          [],
+      ocrTexts: _asStringList(map['ocr_texts']),
+      sceneClassification: _asNonEmptyString(
+        map['scene_classification'],
+        fallback: 'unknown',
+      ),
+      sceneConfidence: _asDouble(map['scene_confidence']),
+      personCount: _asInt(map['person_count']),
+      personRects: _asRectList(map['person_rects']),
     );
   }
+
+  final List<String> ocrTexts;
+  final String sceneClassification;
+  final double sceneConfidence;
+  final int personCount;
+  final List<Map<String, double>> personRects;
 
   /// Build a human-readable context string for injecting into the VLM prompt.
   String toPromptContext() {
@@ -87,19 +79,6 @@ class VisionAnalysis {
 
 /// A spatially-located object from Layer 1 (YOLOv3 + Depth Anything V2 fusion).
 class SpatialObjectData {
-  final String label;
-  final double confidence;
-  final int clockPosition; // 9=left, 12=center, 3=right
-  final double?
-  relativeDepth; // 0.0=closest, 1.0=farthest; null if depth unavailable
-  final double centerX;
-  final double centerY;
-  final double?
-  bboxX; // image-space bounding box (top-left origin, normalised 0–1)
-  final double? bboxY;
-  final double? bboxW;
-  final double? bboxH;
-
   const SpatialObjectData({
     required this.label,
     required this.confidence,
@@ -115,18 +94,31 @@ class SpatialObjectData {
 
   factory SpatialObjectData.fromMap(Map<dynamic, dynamic> map) {
     return SpatialObjectData(
-      label: (map['label'] as String?) ?? 'object',
-      confidence: (map['confidence'] as num?)?.toDouble() ?? 0.0,
-      clockPosition: (map['clock_position'] as int?) ?? 12,
-      relativeDepth: (map['relative_depth'] as num?)?.toDouble(),
-      centerX: (map['center_x'] as num?)?.toDouble() ?? 0.5,
-      centerY: (map['center_y'] as num?)?.toDouble() ?? 0.5,
-      bboxX: (map['bbox_x'] as num?)?.toDouble(),
-      bboxY: (map['bbox_y'] as num?)?.toDouble(),
-      bboxW: (map['bbox_w'] as num?)?.toDouble(),
-      bboxH: (map['bbox_h'] as num?)?.toDouble(),
+      label: _asNonEmptyString(map['label'], fallback: 'object'),
+      confidence: _asDouble(map['confidence']),
+      clockPosition: _asInt(map['clock_position'], fallback: 12),
+      relativeDepth: _asNullableDouble(map['relative_depth']),
+      centerX: _asDouble(map['center_x'], fallback: 0.5),
+      centerY: _asDouble(map['center_y'], fallback: 0.5),
+      bboxX: _asNullableDouble(map['bbox_x']),
+      bboxY: _asNullableDouble(map['bbox_y']),
+      bboxW: _asNullableDouble(map['bbox_w']),
+      bboxH: _asNullableDouble(map['bbox_h']),
     );
   }
+
+  final String label;
+  final double confidence;
+  final int clockPosition; // 9=left, 12=center, 3=right
+  final double?
+  relativeDepth; // 0.0=closest, 1.0=farthest; null if depth unavailable
+  final double centerX;
+  final double centerY;
+  final double?
+  bboxX; // image-space bounding box (top-left origin, normalised 0–1)
+  final double? bboxY;
+  final double? bboxW;
+  final double? bboxH;
 
   String? get distanceTier {
     final d = relativeDepth;
@@ -147,9 +139,6 @@ class SpatialObjectData {
 
 /// Full output from Layer 1 — Vision + Depth Anything V2 + YOLOv3 fused.
 class ScenePerceptionResult extends VisionAnalysis {
-  final List<SpatialObjectData> detectedObjects;
-  final bool hasDepthMap;
-
   const ScenePerceptionResult({
     required super.ocrTexts,
     required super.sceneClassification,
@@ -162,34 +151,26 @@ class ScenePerceptionResult extends VisionAnalysis {
 
   factory ScenePerceptionResult.fromMap(Map<dynamic, dynamic> map) {
     return ScenePerceptionResult(
-      ocrTexts:
-          (map['ocr_texts'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      sceneClassification:
-          (map['scene_classification'] as String?) ?? 'unknown',
-      sceneConfidence: (map['scene_confidence'] as num?)?.toDouble() ?? 0.0,
-      personCount: (map['person_count'] as int?) ?? 0,
-      personRects:
-          (map['person_rects'] as List<dynamic>?)
-              ?.map(
-                (r) => (r as Map<dynamic, dynamic>).map(
-                  (k, v) => MapEntry(k.toString(), (v as num).toDouble()),
-                ),
-              )
-              .toList() ??
-          [],
+      ocrTexts: _asStringList(map['ocr_texts']),
+      sceneClassification: _asNonEmptyString(
+        map['scene_classification'],
+        fallback: 'unknown',
+      ),
+      sceneConfidence: _asDouble(map['scene_confidence']),
+      personCount: _asInt(map['person_count']),
+      personRects: _asRectList(map['person_rects']),
       detectedObjects:
           (map['detected_objects'] as List<dynamic>?)
-              ?.map(
-                (o) => SpatialObjectData.fromMap(o as Map<dynamic, dynamic>),
-              )
+              ?.whereType<Map<dynamic, dynamic>>()
+              .map(SpatialObjectData.fromMap)
               .toList() ??
           [],
-      hasDepthMap: (map['has_depth_map'] as bool?) ?? false,
+      hasDepthMap: _asBool(map['has_depth_map']),
     );
   }
+
+  final List<SpatialObjectData> detectedObjects;
+  final bool hasDepthMap;
 
   /// Rich context string — includes spatial objects and depth tiers.
   @override
@@ -264,17 +245,17 @@ ModelStatus _parseModelStatus(String raw) {
 }
 
 class OfflineVisionStatus {
-  final bool foundationModelsAvailable;
-  final ModelStatus modelStatus;
-  final bool objectDetectionAvailable;
-  final bool depthEstimationAvailable;
-
   const OfflineVisionStatus({
     required this.foundationModelsAvailable,
     required this.modelStatus,
     required this.objectDetectionAvailable,
     required this.depthEstimationAvailable,
   });
+
+  final bool foundationModelsAvailable;
+  final ModelStatus modelStatus;
+  final bool objectDetectionAvailable;
+  final bool depthEstimationAvailable;
 
   bool get smolVlmAvailable =>
       modelStatus == ModelStatus.loaded || modelStatus == ModelStatus.ready;
@@ -324,12 +305,6 @@ class NativeModelDiagnostic {
     required this.message,
   });
 
-  final String name;
-  final bool bundleFound;
-  final bool compiledModelFound;
-  final bool loaded;
-  final String message;
-
   factory NativeModelDiagnostic.fromMap(Map<dynamic, dynamic> map) {
     return NativeModelDiagnostic(
       name: map['name']?.toString() ?? 'Unknown model',
@@ -339,6 +314,12 @@ class NativeModelDiagnostic {
       message: map['message']?.toString() ?? 'No diagnostic message.',
     );
   }
+
+  final String name;
+  final bool bundleFound;
+  final bool compiledModelFound;
+  final bool loaded;
+  final String message;
 }
 
 class OfflineVisionDiagnostics {
@@ -346,9 +327,6 @@ class OfflineVisionDiagnostics {
     required this.objectDetector,
     required this.depthEstimator,
   });
-
-  final NativeModelDiagnostic objectDetector;
-  final NativeModelDiagnostic depthEstimator;
 
   factory OfflineVisionDiagnostics.fromMap(Map<dynamic, dynamic> map) {
     return OfflineVisionDiagnostics(
@@ -360,6 +338,9 @@ class OfflineVisionDiagnostics {
       ),
     );
   }
+
+  final NativeModelDiagnostic objectDetector;
+  final NativeModelDiagnostic depthEstimator;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,12 +356,6 @@ class ModelFileDownloadInfo {
     required this.sha256,
   });
 
-  final String name;
-  final bool downloaded;
-  final int sizeBytes;
-  final int expectedSizeBytes;
-  final String sha256;
-
   factory ModelFileDownloadInfo.fromMap(Map<dynamic, dynamic> map) {
     return ModelFileDownloadInfo(
       name: map['name']?.toString() ?? 'Unknown file',
@@ -390,6 +365,12 @@ class ModelFileDownloadInfo {
       sha256: map['sha256']?.toString() ?? '',
     );
   }
+
+  final String name;
+  final bool downloaded;
+  final int sizeBytes;
+  final int expectedSizeBytes;
+  final String sha256;
 }
 
 class SmolVlmModelInfo {
@@ -403,20 +384,6 @@ class SmolVlmModelInfo {
     required this.modelName,
     required this.files,
   });
-
-  final bool downloaded;
-  final bool valid;
-  final bool downloading;
-  final int sizeBytes;
-  final int requiredBytes;
-  final String path;
-  final String modelName;
-  final List<ModelFileDownloadInfo> files;
-
-  double get progress {
-    if (requiredBytes <= 0) return downloaded ? 1 : 0;
-    return (sizeBytes / requiredBytes).clamp(0, 1).toDouble();
-  }
 
   factory SmolVlmModelInfo.fromMap(Map<dynamic, dynamic> map) {
     final rawFiles = map['files'];
@@ -437,6 +404,20 @@ class SmolVlmModelInfo {
       files: files,
     );
   }
+
+  final bool downloaded;
+  final bool valid;
+  final bool downloading;
+  final int sizeBytes;
+  final int requiredBytes;
+  final String path;
+  final String modelName;
+  final List<ModelFileDownloadInfo> files;
+
+  double get progress {
+    if (requiredBytes <= 0) return downloaded ? 1 : 0;
+    return (sizeBytes / requiredBytes).clamp(0, 1).toDouble();
+  }
 }
 
 class ModelDownloadEvent {
@@ -449,16 +430,6 @@ class ModelDownloadEvent {
     required this.requiredBytes,
     this.fileName,
   });
-
-  final String status;
-  final String phase;
-  final double progress;
-  final int filesDownloaded;
-  final int totalFiles;
-  final int requiredBytes;
-  final String? fileName;
-
-  bool get isComplete => status == 'complete';
 
   factory ModelDownloadEvent.fromNative(Object? event) {
     if (event is double) {
@@ -493,18 +464,77 @@ class ModelDownloadEvent {
       fileName: map['fileName']?.toString(),
     );
   }
+
+  final String status;
+  final String phase;
+  final double progress;
+  final int filesDownloaded;
+  final int totalFiles;
+  final int requiredBytes;
+  final String? fileName;
+
+  bool get isComplete => status == 'complete';
 }
 
-int _asInt(Object? value) {
+int _asInt(Object? value, {int fallback = 0}) {
   if (value is int) return value;
   if (value is num) return value.round();
-  return int.tryParse(value?.toString() ?? '') ?? 0;
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
-double _asDouble(Object? value) {
+double _asDouble(Object? value, {double fallback = 0}) {
   if (value is double) return value;
   if (value is num) return value.toDouble();
-  return double.tryParse(value?.toString() ?? '') ?? 0;
+  return double.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+double? _asNullableDouble(Object? value) {
+  if (value == null) return null;
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
+}
+
+bool _asBool(Object? value, {bool fallback = false}) {
+  if (value is bool) return value;
+  final raw = value?.toString().toLowerCase().trim();
+  if (raw == 'true' || raw == '1' || raw == 'yes') return true;
+  if (raw == 'false' || raw == '0' || raw == 'no') return false;
+  return fallback;
+}
+
+String _asNonEmptyString(Object? value, {required String fallback}) {
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? fallback : text;
+}
+
+List<String> _asStringList(Object? value) {
+  if (value == null) return const [];
+  if (value is List) {
+    return value
+        .map((item) => item?.toString().trim() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+  final text = value.toString().trim();
+  return text.isEmpty ? const [] : [text];
+}
+
+List<Map<String, double>> _asRectList(Object? value) {
+  if (value is! List) return const [];
+  final rects = <Map<String, double>>[];
+  for (final item in value) {
+    if (item is! Map) continue;
+    final rect = <String, double>{};
+    for (final entry in item.entries) {
+      final parsed = _asNullableDouble(entry.value);
+      if (parsed != null) {
+        rect[entry.key.toString()] = parsed;
+      }
+    }
+    if (rect.isNotEmpty) rects.add(rect);
+  }
+  return rects;
 }
 
 /// Dart-side client for the native on-device vision MethodChannel.
@@ -546,35 +576,61 @@ class OnDeviceVisionService {
   /// Kept for backward-compat; prefer [analyzeScene] for new code.
   Future<VisionAnalysis> analyzeWithVision(Uint8List jpegBytes) async {
     try {
+      _recordVisionLog(
+        'analyzeWithVision start imageBytes=${jpegBytes.length}',
+      );
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
         'analyzeWithVision',
         {'imageBytes': jpegBytes},
       );
       if (result == null || result.containsKey('error')) {
+        final stage = result?['diagnostic_stage']?.toString() ?? 'native';
         debugPrint(
-          '[OnDeviceVision] analyzeWithVision error: ${result?['error']}',
+          '[OnDeviceVision] analyzeWithVision error at $stage: ${result?['error']}',
+        );
+        _recordVisionLog(
+          'analyzeWithVision error stage=$stage error=${result?['error']}',
         );
         throw LocalVisionException(
           'Local L02',
           'Apple Vision could not analyze this image.',
-          detail: result?['error']?.toString(),
+          detail: 'stage=$stage ${result?['error'] ?? ''}'.trim(),
         );
       }
-      return VisionAnalysis.fromMap(result);
+      final analysis = VisionAnalysis.fromMap(result);
+      final warnings = _asStringList(result['vision_warnings']);
+      _recordVisionLog(
+        'analyzeWithVision parsed stage=${result['diagnostic_stage'] ?? "complete"} '
+        'ocr=${analysis.ocrTexts.length} people=${analysis.personCount} '
+        'scene=${analysis.sceneClassification} warnings=${warnings.join("|")}',
+      );
+      return analysis;
     } on LocalVisionException {
       rethrow;
     } on MissingPluginException catch (e) {
       debugPrint('[OnDeviceVision] Missing plugin: $e');
+      _recordVisionLog('analyzeWithVision missing_plugin $e');
       throw const LocalVisionException(
         'Local L01',
         'native vision channel is not registered.',
       );
     } on PlatformException catch (e) {
       debugPrint('[OnDeviceVision] Platform error: ${e.message}');
+      _recordVisionLog(
+        'analyzeWithVision platform_error ${_platformDetail(e)}',
+      );
       throw LocalVisionException(
         'Local L03',
         'Apple Vision or Core ML failed.',
         detail: _platformDetail(e),
+      );
+    } catch (e) {
+      debugPrint('[OnDeviceVision] Dart parse error: $e');
+      _recordVisionLog('analyzeWithVision dart_parse_error $e');
+      throw LocalVisionException(
+        'Local L04',
+        'Apple Vision returned data that Dart could not parse.',
+        detail: e.toString(),
       );
     }
   }
@@ -1021,8 +1077,8 @@ class OnDeviceVisionService {
   static Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> source) {
     return source.map((key, value) {
       final dynamic mappedValue = switch (value) {
-        Map<dynamic, dynamic> map => _stringKeyedMap(map),
-        List list =>
+        final Map<dynamic, dynamic> map => _stringKeyedMap(map),
+        final List list =>
           list
               .map(
                 (item) => item is Map<dynamic, dynamic>
@@ -1043,5 +1099,9 @@ class OnDeviceVisionService {
     final details = e.details;
     if (details != null) parts.add(details.toString());
     return parts.join(': ');
+  }
+
+  static void _recordVisionLog(String message) {
+    unawaited(AppLogService.instance.record(message, source: 'vision'));
   }
 }

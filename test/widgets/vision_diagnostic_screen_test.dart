@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -90,12 +89,64 @@ void main() {
       expect(clipboardText, contains('SmolVLM2 description.'));
     },
   );
+
+  testWidgets('Vision Diagnostic vision-only run shows copyable native error', (
+    tester,
+  ) async {
+    final onDevice = _FakeOnDeviceVisionService()
+      ..visionOnlyError = const LocalVisionException(
+        'Local L03',
+        'Apple Vision or Core ML failed.',
+        detail: 'VISION_CRASH: classification failed',
+      );
+    final sceneService = SceneDescriptionService(
+      cloudService: _FakeVertexAiService(),
+      onDeviceService: onDevice,
+      connectivityService: _FakeConnectivityService(),
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        VisionDiagnosticScreen(
+          onDeviceService: onDevice,
+          sceneService: sceneService,
+          initialImageBytes: _jpegBytes,
+          initialImageSource: 'Fake image',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Cloud Gemini'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cloud Gemini'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Vision-only template').last);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Run Description'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run Description'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Local L03'), findsOneWidget);
+    expect(find.text('Copy Result'), findsOneWidget);
+
+    await tester.tap(find.text('Copy Result'));
+    await tester.pump();
+
+    expect(clipboardText, contains('Diagnostic: Vision-only template'));
+    expect(clipboardText, contains('Error:'));
+    expect(clipboardText, contains('VISION_CRASH'));
+    expect(clipboardText, contains('classification failed'));
+  });
 }
 
 Widget _buildTestApp(Widget child) {
   return ScreenUtilInit(
     designSize: const Size(375, 812),
-    builder: (_, __) => MaterialApp(theme: ICanTheme.lightTheme, home: child),
+    builder: (context, childWidget) =>
+        MaterialApp(theme: ICanTheme.lightTheme, home: child),
   );
 }
 
@@ -170,6 +221,8 @@ final _jpegBytes = Uint8List.fromList([
 ]);
 
 class _FakeOnDeviceVisionService extends OnDeviceVisionService {
+  LocalVisionException? visionOnlyError;
+
   @override
   Future<ModelStatus> getModelStatus() async => ModelStatus.loaded;
 
@@ -256,6 +309,19 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
         ),
       ],
       hasDepthMap: true,
+    );
+  }
+
+  @override
+  Future<VisionAnalysis> analyzeWithVision(Uint8List jpegBytes) async {
+    final error = visionOnlyError;
+    if (error != null) throw error;
+    return const VisionAnalysis(
+      ocrTexts: ['EXIT'],
+      sceneClassification: 'hallway',
+      sceneConfidence: 0.91,
+      personCount: 1,
+      personRects: [],
     );
   }
 
