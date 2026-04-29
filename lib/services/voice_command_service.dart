@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 
 import '../models/home_view_model.dart';
 import '../models/settings_provider.dart';
-import '../protocol/ble_protocol.dart';
 import '../services/ble_service.dart';
 import '../services/stt_service.dart';
 import '../services/tts_service.dart';
@@ -129,9 +128,11 @@ class VoiceCommandService extends ChangeNotifier {
   }
 
   void _onButtonEvent(String event) {
-    if (event == EyeEvents.buttonDouble) {
-      activateVoiceCommand();
-    }
+    // DOUBLE press is owned by HomeViewModel (Cloud <-> Local toggle) per the
+    // button contract in AGENTS.md. Voice is launched via the in-app Listen
+    // button only. If we re-enable a hardware voice trigger later, pick a
+    // distinct gesture (e.g. an ultra-long >=3s press in Eye firmware) so it
+    // can't collide with the mode toggle.
   }
 
   Future<void> activateVoiceCommand() async {

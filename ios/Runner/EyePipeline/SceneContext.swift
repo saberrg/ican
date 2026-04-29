@@ -118,49 +118,61 @@ struct PerceptionResult {
     // MARK: - Template Fallback
 
     /// Assemble a spoken description from Layer 1 data alone (no VLM required).
-    /// Used as the final fallback when neither Foundation Models nor SmolVLM2 is available.
+    /// Speech-natural: hazards first, clock positions, skip anything we don't have.
     func toTemplateDescription() -> String {
-        var sentences: [String] = []
+        var parts: [String] = []
 
-        // 1. WHERE
+        // 1. Hazards first.
+        let closeObjects = detectedObjects
+            .filter { ($0.relativeDepth ?? 1.0) < 0.50 }
+            .prefix(3)
+        if !closeObjects.isEmpty {
+            let descs = closeObjects.map(spokenSpatialLabel).joined(separator: ", ")
+            parts.append("Heads up: \(descs).")
+        }
+
+        // 2. Where you are.
         if sceneClassification != "unknown" && sceneConfidence > 0.15 {
             let label = sceneClassification.replacingOccurrences(of: "_", with: " ")
-            sentences.append("You appear to be in a \(label) setting.")
-        } else {
-            sentences.append("The scene type could not be clearly identified.")
+            parts.append("You are in a \(label).")
         }
 
-        // 2. SAFETY — close objects first
-        let closeObjects = detectedObjects.filter { ($0.relativeDepth ?? 1.0) < 0.50 }
-        if !closeObjects.isEmpty {
-            let descs = closeObjects.prefix(3).map(\.spatialLabel).joined(separator: ", ")
-            sentences.append("Caution: \(descs).")
-        }
-
-        // 3. PEOPLE
-        if personCount > 0 {
-            let noun = personCount == 1 ? "1 person is" : "\(personCount) people are"
-            sentences.append("\(noun.capitalized) detected nearby.")
-        }
-
-        // 4. TEXT
-        if !ocrTexts.isEmpty {
-            if ocrTexts.count == 1 {
-                sentences.append("Text reads: \(ocrTexts[0]).")
+        // 3. People — only if not already in the close-object list.
+        let personAlreadyCalled = closeObjects.contains { $0.label.lowercased() == "person" }
+        if personCount > 0 && !personAlreadyCalled {
+            if personCount == 1 {
+                parts.append("Someone is nearby.")
             } else {
-                sentences.append("Visible text includes: \(ocrTexts.prefix(3).joined(separator: ", ")).")
+                parts.append("\(personCount) people nearby.")
             }
         }
 
-        // 5. Other objects
+        // 4. Readable text.
+        if !ocrTexts.isEmpty {
+            if ocrTexts.count == 1 {
+                parts.append("A sign reads \(ocrTexts[0]).")
+            } else {
+                parts.append("Signs read \(ocrTexts.prefix(3).joined(separator: "; ")).")
+            }
+        }
+
+        // 5. Other objects.
         let otherObjects = detectedObjects
             .filter { ($0.relativeDepth ?? 0.0) >= 0.50 }
             .prefix(4)
         if !otherObjects.isEmpty {
-            let descs = otherObjects.map(\.spatialLabel).joined(separator: ", ")
-            sentences.append("Also nearby: \(descs).")
+            let descs = otherObjects.map(spokenSpatialLabel).joined(separator: ", ")
+            parts.append("Also around you: \(descs).")
         }
 
-        return sentences.joined(separator: " ")
+        if parts.isEmpty { return "Scene unclear, try again." }
+        return parts.joined(separator: " ")
+    }
+
+    /// "chair at 11 o'clock, close" — matches the Dart spokenSpatialLabel.
+    private func spokenSpatialLabel(_ o: SpatialObject) -> String {
+        var s = "\(o.label) at \(o.clockPosition) o'clock"
+        if let tier = o.distanceTier { s += ", \(tier)" }
+        return s
     }
 }

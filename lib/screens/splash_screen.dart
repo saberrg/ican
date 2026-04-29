@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:go_router/go_router.dart';
+import '../core/route_constants.dart';
 import '../services/ble_service.dart';
 import '../services/device_prefs_service.dart';
 
@@ -83,8 +84,17 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!mounted) return;
 
-    // Demo startup is deterministic: persisted role is ignored here.
-    context.goNamed('home');
+    // Route based on saved role. First launch has no role → Role Selection.
+    final role = await DevicePrefsService.instance.getUserRole();
+    if (!mounted) return;
+    switch (role) {
+      case 'caretaker':
+        context.goNamed(Routes.caretakerDashboardName);
+      case 'user':
+        context.goNamed(Routes.homeName);
+      default:
+        context.goNamed(Routes.roleSelectionName);
+    }
   }
 
   void _startBleAutoConnect() async {

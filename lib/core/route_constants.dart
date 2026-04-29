@@ -8,12 +8,16 @@ class Routes {
   static const String settings = '/settings';
   static const String help = '/help';
   static const String devicePairing = '/device-pairing';
+  static const String roleSelection = '/dev/role-selection';
+  static const String caretakerDashboard = '/dev/caretaker-dashboard';
 
   // Named routes — used by GoRouter name: parameter and context.goNamed()
   static const String homeName = 'home';
   static const String settingsName = 'settings';
   static const String helpName = 'help';
   static const String devicePairingName = 'device-pairing';
+  static const String roleSelectionName = 'role-selection';
+  static const String caretakerDashboardName = 'caretaker-dashboard';
   static const String notFoundName = 'not-found';
 
   // Tab index lookup — keeps bottom nav logic in one place

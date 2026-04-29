@@ -136,12 +136,22 @@ void main() {
       );
     });
 
-    test('Eye double button event activates voice command', () async {
+    // Regression lock: per AGENTS.md "Eye Button Contract", DOUBLE is owned
+    // by HomeViewModel (Cloud ↔ Local toggle). Voice must NOT listen to the
+    // hardware button stream. Any future edit that re-wires this will fail.
+    test('Eye hardware button events never activate voice command', () async {
+      ble.emit('BUTTON:SINGLE');
       ble.emit('BUTTON:DOUBLE');
+      ble.emit('BUTTON:LONG');
+      await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(service.state, VoiceCommandState.listening);
-      expect(stt.startCount, 1);
+      expect(
+        service.state,
+        VoiceCommandState.idle,
+        reason: 'Voice must only activate via in-app Listen button, not BLE.',
+      );
+      expect(stt.startCount, 0);
     });
   });
 }

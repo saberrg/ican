@@ -15,8 +15,10 @@ final class ObjectDetector {
     static let shared = ObjectDetector()
 
     private static let modelName = "YOLOv3Tiny"
-    private let confidenceThreshold: Float = 0.35
-    private let maxObjects = 12
+    // Surface borderline detections; the Dart layer applies its own floor so
+    // low-confidence callouts can be bucketed separately from the tier-1 ladder.
+    private let confidenceThreshold: Float = 0.20
+    private let maxObjects = 16
 
     private var vnModel: VNCoreMLModel?
     private(set) var diagnostic: [String: Any] = [

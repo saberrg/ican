@@ -756,7 +756,8 @@ class _FlowActions extends StatelessWidget {
         AccessibleButton(
           label: actionLabel,
           hint: actionHint,
-          subtitle: 'Eye button: single runs, long cycles, double listens',
+          subtitle:
+              'Eye button: single describes, double swaps Cloud/Local, long toggles Live',
           onPressed: enabled ? vm.executeActiveVisionMode : null,
         ),
         const SizedBox(height: AppSpacing.sm),

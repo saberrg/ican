@@ -2,8 +2,20 @@
 
 ## Demo Priority
 - The release blocker is Describe stability on iPhone with iCan Eye.
-- Splash must land on Home. Caretaker and role-selection paths stay hidden unless opened through a tested dev path.
+- Splash reads the persisted role from `DevicePrefsService`:
+  - No role saved (first launch) → `/dev/role-selection`.
+  - `user` → `/` (Home).
+  - `caretaker` → `/dev/caretaker-dashboard`.
+- Role Selection writes the choice, then routes User → Home (or Device Pairing on first pair) and Caretaker → Caretaker Dashboard.
 - Auto vision mode is cloud-first. Local/native fallback is allowed only after native Vision health checks prove it is usable.
+
+## Eye Button Contract
+The physical button on the iCan Eye sends `BUTTON:SINGLE / BUTTON:DOUBLE / BUTTON:LONG` on the capture RX characteristic. The owning mapping is in `HomeViewModel._buttonSub`:
+- **SINGLE** → run the active describe pipeline (Cloud or Local). No-op while Live is running.
+- **DOUBLE** → toggle Cloud ↔ Local describe mode. Stops Live first if it's running. TTS announces the new mode.
+- **LONG** → toggle Live detection on/off.
+
+Voice command is **not** hardware-triggered; it's reached from the in-app Listen button only. `VoiceCommandService._onButtonEvent` is intentionally empty — do not re-wire it to DOUBLE.
 
 ## Workstream Ownership
 - Crash/Describe: `lib/models/home_view_model.dart`, `lib/services/scene_description_service.dart`, `lib/services/scene_prompt_builder.dart`, Describe tests.
@@ -17,7 +29,9 @@ Agents should not edit another active workstream unless the task explicitly requ
 - Do not mark Eye connected before required Eye notifications are subscribed.
 - Do not speak partial Gemini output as a complete scene description.
 - Do not enable local/offline vision fallback in Auto when native Vision health is unavailable.
-- Do not route startup to caretaker or role selection for the demo path.
+- Do not hard-code Splash to `/` — always respect the saved role per the Demo Priority section.
+- Do not re-bind the Eye hardware DOUBLE press to voice. Voice is in-app only.
+- Do not revert the button contract to "long cycles modes" — LONG is a Live toggle now.
 - Do not claim hardware validation without real-device notes.
 
 ## Required Gates

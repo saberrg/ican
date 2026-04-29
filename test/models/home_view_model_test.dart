@@ -207,17 +207,53 @@ void main() {
       await resultFuture;
     });
 
-    test('Eye long press cycles the active vision mode', () async {
-      expect(viewModel.visionControlMode, VisionControlMode.cloud);
+    test(
+      'Eye double press toggles Cloud → Local and speaks new mode',
+      () async {
+        expect(viewModel.visionControlMode, VisionControlMode.cloud);
 
-      BleService.instance.handleEyeControlMessageForTesting(
-        EyeEvents.buttonLong,
-      );
+        BleService.instance.handleEyeControlMessageForTesting(
+          EyeEvents.buttonDouble,
+        );
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(viewModel.visionControlMode, VisionControlMode.local);
+        expect(
+          speech.spoken.any((s) => s.toLowerCase().contains('local')),
+          isTrue,
+          reason: 'DOUBLE should speak the new mode; got ${speech.spoken}',
+        );
+      },
+    );
+
+    test('Eye double press toggles Local → Cloud', () async {
+      viewModel.settingsProvider.setVisionControlMode(VisionControlMode.local);
       await Future<void>.delayed(Duration.zero);
 
-      expect(viewModel.visionControlMode, VisionControlMode.local);
-      expect(speech.spoken, contains('Local mode selected.'));
+      BleService.instance.handleEyeControlMessageForTesting(
+        EyeEvents.buttonDouble,
+      );
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(viewModel.visionControlMode, VisionControlMode.cloud);
     });
+
+    test(
+      'Eye long press does not cycle modes — LONG is reserved for Live toggle',
+      () async {
+        final initialMode = viewModel.visionControlMode;
+
+        BleService.instance.handleEyeControlMessageForTesting(
+          EyeEvents.buttonLong,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        // LONG must NEVER rotate Cloud→Local→Live. It only toggles Live.
+        expect(viewModel.visionControlMode, initialMode);
+      },
+    );
 
     test('Eye single press executes the selected cloud mode', () async {
       settingsReadyForDescribe(viewModel);

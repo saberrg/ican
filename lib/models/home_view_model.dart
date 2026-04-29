@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:image/image.dart' as img;
 
 import '../protocol/describe_attempt_trace.dart';
@@ -55,6 +56,7 @@ class HomeViewModel extends ChangeNotifier {
            liveDetectionController ??
            LiveDetectionController(
              ttsService: ttsService,
+             cloudService: sceneService.cloudService,
              verbosityProvider: () => settingsProvider.liveDetectionVerbosity,
            ),
        _traceStore = traceStore ?? DescribeAttemptTraceStore(),
@@ -250,10 +252,16 @@ class HomeViewModel extends ChangeNotifier {
     });
 
     _buttonSub = BleService.instance.buttonEventStream.listen((event) {
+      // Physical button contract (see AGENTS.md):
+      //   SINGLE → capture + run the current vision pipeline (Cloud or Local).
+      //   DOUBLE → toggle Cloud ↔ Local describe mode.
+      //   LONG   → toggle Live detection on/off.
       if (event == EyeEvents.buttonSingle) {
-        unawaited(executeActiveVisionMode());
+        unawaited(_onButtonSinglePress());
+      } else if (event == EyeEvents.buttonDouble) {
+        unawaited(_onButtonDoublePress());
       } else if (event == EyeEvents.buttonLong) {
-        unawaited(cycleVisionControlMode());
+        unawaited(_onButtonLongPress());
       }
     });
 
@@ -445,6 +453,45 @@ class HomeViewModel extends ChangeNotifier {
     final error = _liveController.lastError;
     if (liveVisionActive) return 'Live mode started.';
     return error ?? 'Live mode could not start.';
+  }
+
+  // ── Physical-button handlers (see AGENTS.md button contract) ──────────
+  //
+  // SINGLE → run the current mode's describe. If Live is on, no-op so the
+  //          ladder isn't interrupted.
+  // DOUBLE → toggle Cloud ↔ Local describe mode. Stops Live first if it's
+  //          running, so the user lands in a stable state after the swap.
+  // LONG   → toggle Live detection on/off.
+
+  Future<void> _onButtonSinglePress() async {
+    HapticFeedback.lightImpact();
+    if (liveVisionActive) return;
+    final mode = settingsProvider.visionControlMode;
+    if (mode == VisionControlMode.live) {
+      await _toggleLiveMode();
+      return;
+    }
+    await executeActiveVisionMode();
+  }
+
+  Future<void> _onButtonDoublePress() async {
+    HapticFeedback.mediumImpact();
+    if (liveVisionActive) {
+      await stopLiveVision();
+    }
+    final current = settingsProvider.visionControlMode;
+    final next = switch (current) {
+      VisionControlMode.cloud => VisionControlMode.local,
+      VisionControlMode.local => VisionControlMode.cloud,
+      VisionControlMode.live => VisionControlMode.cloud,
+    };
+    await setVisionControlMode(next);
+    unawaited(ttsService.speak('${next.label} mode.'));
+  }
+
+  Future<void> _onButtonLongPress() async {
+    HapticFeedback.heavyImpact();
+    await _toggleLiveMode();
   }
 
   Future<String> _describeNow(_DescribeFlow flow) {

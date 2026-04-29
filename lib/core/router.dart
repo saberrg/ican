@@ -7,8 +7,10 @@ import 'package:provider/provider.dart';
 import '../main.dart' show appSettingsProvider, voiceCommandService;
 import '../models/home_view_model.dart';
 import '../screens/accessible_home_screen.dart';
+import '../screens/caretaker_dashboard_screen.dart';
 import '../screens/connection_error_screen.dart';
 import '../screens/device_pairing_screen.dart';
+import '../screens/role_selection_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/vision_diagnostic_screen.dart';
 import '../services/on_device_vision_service.dart';
@@ -64,6 +66,24 @@ GoRouter buildRouter() {
             onPairingComplete: () => context.goNamed(Routes.homeName),
             onSkip: () => context.goNamed(Routes.homeName),
           ),
+        ),
+      ),
+      GoRoute(
+        path: Routes.roleSelection,
+        name: Routes.roleSelectionName,
+        pageBuilder: (context, state) => _buildPage(
+          state: state,
+          name: Routes.roleSelectionName,
+          child: const RoleSelectionScreen(),
+        ),
+      ),
+      GoRoute(
+        path: Routes.caretakerDashboard,
+        name: Routes.caretakerDashboardName,
+        pageBuilder: (context, state) => _buildPage(
+          state: state,
+          name: Routes.caretakerDashboardName,
+          child: const CaretakerDashboardScreen(),
         ),
       ),
       GoRoute(

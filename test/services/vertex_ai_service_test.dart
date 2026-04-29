@@ -158,7 +158,7 @@ void main() {
     });
 
     test(
-      'cloud image requests default to the high-quality Pro model',
+      'cloud image requests default to the Flash model for the demo path',
       () async {
         late http.Request capturedRequest;
         final service = VertexAiService(
@@ -174,7 +174,11 @@ void main() {
           systemPrompt: 'Describe safely.',
         );
 
-        expect(capturedRequest.url.path, contains('gemini-2.5-pro'));
+        // Flash is the demo default. Pro is still selectable via setModel()
+        // for diagnostics, but any path that forgets to pick a model must
+        // land on Flash so latency stays low.
+        expect(capturedRequest.url.path, contains('gemini-2.5-flash'));
+        expect(capturedRequest.url.path, isNot(contains('gemini-2.5-pro')));
       },
     );
 

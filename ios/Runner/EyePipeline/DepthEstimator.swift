@@ -37,6 +37,7 @@ final class DepthEstimator {
     private func loadModel() {
         var sawBundle = false
         var sawCompiled = false
+        var lastFailure: String?
         for name in [Self.preferredModelName, Self.fallbackModelName] {
             let packageUrl = Bundle.main.url(forResource: name, withExtension: "mlpackage")
             let compiledUrl = Bundle.main.url(forResource: name, withExtension: "mlmodelc")
@@ -65,20 +66,23 @@ final class DepthEstimator {
                         "loaded": false,
                         "message": "\(name) failed to load: \(error.localizedDescription)"
                     ]
+                    lastFailure = "\(name) found as \(compiledUrl != nil ? ".mlmodelc" : ".mlpackage") but failed to load: \(error.localizedDescription)"
                     print("[DepthEstimator] Failed to load \(name): \(error)")
                 }
             }
         }
+        let message = lastFailure
+            ?? (sawBundle
+                ? "Depth model was found but did not load."
+                : "Depth model was not found in the app bundle.")
         diagnostic = [
             "name": Self.preferredModelName,
             "bundle_found": sawBundle,
             "compiled_model_found": sawCompiled,
             "loaded": false,
-            "message": sawBundle
-                ? "Depth model was found but did not load."
-                : "Depth model was not found in the app bundle."
+            "message": message
         ]
-        print("[DepthEstimator] No depth model found in bundle — depth estimation disabled")
+        print("[DepthEstimator] \(message)")
     }
 
     // MARK: - Inference

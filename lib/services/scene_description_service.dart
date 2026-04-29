@@ -210,7 +210,7 @@ class SceneDescriptionService extends ChangeNotifier {
   }) async {
     _lastCloudFailure = null;
     _lastBackend = VisionBackend.cloud;
-    await cloudService.setModel(AiModel.pro);
+    await cloudService.setModel(AiModel.flash);
     debugPrint('[SceneDescription] Using explicit backend: cloud');
     try {
       final prompt = const ScenePromptBuilder().build(promptContext);
@@ -970,107 +970,117 @@ class SceneDescriptionService extends ChangeNotifier {
   }
 }
 
+String _spokenSpatialLabel(SpatialObjectData o) {
+  final clock = 'at ${o.clockPosition} o\'clock';
+  final tier = o.distanceTier;
+  return tier == null ? '${o.label} $clock' : '${o.label} $clock, $tier';
+}
+
+String _joinSpoken(List<String> parts) {
+  if (parts.isEmpty) return '';
+  if (parts.length == 1) return parts.first;
+  if (parts.length == 2) return '${parts[0]} and ${parts[1]}';
+  return '${parts.sublist(0, parts.length - 1).join(', ')}, and ${parts.last}';
+}
+
 extension VisionAnalysisTemplate on VisionAnalysis {
-  /// Assemble a spoken description from Apple Vision data alone.
+  /// Speech-natural description built from Apple Vision facts alone.
+  /// Hazards first, skip anything we don't have, never apologize.
   String toTemplateDescription() {
-    final sentences = <String>[];
+    final parts = <String>[];
 
     if (sceneClassification != 'unknown' && sceneConfidence > 0.15) {
       final label = sceneClassification.replaceAll('_', ' ');
-      sentences.add('You appear to be in a $label setting.');
-    } else {
-      sentences.add('The scene could not be clearly identified.');
+      parts.add('You appear to be in a $label setting.');
     }
 
     if (personCount > 0) {
-      final noun = personCount == 1 ? '1 person is' : '$personCount people are';
-      sentences.add(
-        '${noun[0].toUpperCase()}${noun.substring(1)} detected nearby.',
+      parts.add(
+        personCount == 1
+            ? '1 person is detected nearby.'
+            : '$personCount people are detected nearby.',
       );
     }
 
     if (ocrTexts.isNotEmpty) {
       if (ocrTexts.length == 1) {
-        sentences.add('Text reads: ${ocrTexts.first}.');
+        parts.add('Text reads: ${ocrTexts.first}.');
       } else {
-        sentences.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
+        parts.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
       }
-    } else {
-      sentences.add('No readable text was detected in this offline frame.');
     }
 
-    if (sentences.length < 3) {
-      sentences.add(
-        'Obstacle depth and clear walking space are not available from this basic scan.',
-      );
-    }
-    if (sentences.length < 3) {
-      sentences.add('Retake the photo before moving if you need path detail.');
-    }
-    return sentences.join(' ');
+    if (parts.isEmpty) return 'Scene unclear, try again.';
+    return parts.join(' ');
   }
 }
 
 extension ScenePerceptionResultTemplate on ScenePerceptionResult {
-  /// Assemble a spoken description from Layer 1 data alone.
+  /// Speech-natural description built from the full perception layer
+  /// (Apple Vision + YOLO + Depth). Hazards first, clock positions, no filler.
   String toTemplateDescription() {
-    final sentences = <String>[];
+    final parts = <String>[];
 
-    if (sceneClassification != 'unknown' && sceneConfidence > 0.15) {
-      final label = sceneClassification.replaceAll('_', ' ');
-      sentences.add('You appear to be in a $label setting.');
-    } else {
-      sentences.add('The scene could not be clearly identified.');
-    }
-
+    // 1. Hazards first — anything close with a depth reading.
     final close = detectedObjects
         .where((o) => (o.relativeDepth ?? 1.0) < 0.50)
+        .take(3)
+        .map(_spokenSpatialLabel)
         .toList();
     if (close.isNotEmpty) {
-      final descs = close.take(3).map((o) => o.spatialLabel).join(', ');
-      sentences.add('Caution: $descs.');
-    } else if (hasDepthMap) {
-      sentences.add('No close object was detected by the depth scan.');
+      parts.add('Caution: ${_joinSpoken(close)}.');
     }
 
-    if (personCount > 0) {
-      final noun = personCount == 1 ? '1 person is' : '$personCount people are';
-      sentences.add(
-        '${noun[0].toUpperCase()}${noun.substring(1)} detected nearby.',
-      );
+    // 2. Where you are.
+    if (sceneClassification != 'unknown' && sceneConfidence > 0.15) {
+      final label = sceneClassification.replaceAll('_', ' ');
+      parts.add('You appear to be in a $label setting.');
     }
 
+    // 3. People — only mention if not already called out as a close object.
+    final alreadyCalled = close.any((s) => s.startsWith('person'));
+    if (personCount > 0 && !alreadyCalled) {
+      if (personCount == 1 && personRects.isNotEmpty) {
+        final r = personRects.first;
+        final cx = (r['x'] ?? 0.5) + ((r['w'] ?? 0) / 2);
+        final clock = _clockFromCx(cx);
+        parts.add("1 person is detected nearby at $clock o'clock.");
+      } else if (personCount == 1) {
+        parts.add('1 person is detected nearby.');
+      } else {
+        parts.add('$personCount people are detected nearby.');
+      }
+    }
+
+    // 4. Readable text.
     if (ocrTexts.isNotEmpty) {
       if (ocrTexts.length == 1) {
-        sentences.add('Text reads: ${ocrTexts.first}.');
+        parts.add('Text reads: ${ocrTexts.first}.');
       } else {
-        sentences.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
+        parts.add('Visible text includes: ${ocrTexts.take(3).join(', ')}.');
       }
-    } else {
-      sentences.add('No readable text was detected in this offline frame.');
     }
 
+    // 5. Other objects within reasonable range, compact list.
     final others = detectedObjects
         .where((o) => (o.relativeDepth ?? 0.0) >= 0.50)
-        .take(4);
+        .take(4)
+        .map(_spokenSpatialLabel)
+        .toList();
     if (others.isNotEmpty) {
-      sentences.add(
-        'Also nearby: ${others.map((o) => o.spatialLabel).join(', ')}.',
-      );
+      parts.add('Also nearby: ${_joinSpoken(others)}.');
     }
 
-    if (sentences.length < 3) {
-      sentences.add(
-        hasDepthMap
-            ? 'The depth scan has limited detail beyond the listed objects.'
-            : 'Depth detail is unavailable, so move slowly and rescan if the path is uncertain.',
-      );
-    }
-    if (sentences.length < 3) {
-      sentences.add('Retake the photo before moving if you need path detail.');
-    }
+    if (parts.isEmpty) return 'Scene unclear, try again.';
+    return parts.take(5).join(' ');
+  }
 
-    return sentences.take(5).join(' ');
+  static int _clockFromCx(double cx) {
+    if (cx < 0.17) return 10;
+    if (cx < 0.34) return 11;
+    if (cx < 0.66) return 12;
+    if (cx < 0.83) return 1;
+    return 2;
   }
 }
 

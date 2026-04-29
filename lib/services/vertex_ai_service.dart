@@ -140,7 +140,11 @@ class VertexAiService extends ChangeNotifier {
   final Duration _requestTimeout;
   final bool _ownsClient;
 
-  AiModel _model = AiModel.pro;
+  // Default to Flash — it's the demo path and gives sub-2s image describes
+  // when paired with thinkingConfig.thinkingBudget=0. Pro is still selectable
+  // via setModel() for diagnostics, but any caller that forgets to pick a
+  // model gets the fast/cheap option instead of burning ~5s on Pro thinking.
+  AiModel _model = AiModel.flash;
   AiModel get model => _model;
 
   bool get isConfigured => _apiKey.isNotEmpty && _apiKey != 'dummy';
@@ -156,7 +160,7 @@ class VertexAiService extends ChangeNotifier {
       if (saved != null) {
         _model = AiModel.values.firstWhere(
           (m) => m.id == saved,
-          orElse: () => AiModel.pro,
+          orElse: () => AiModel.flash,
         );
       }
     } catch (_) {}
@@ -219,6 +223,10 @@ class VertexAiService extends ChangeNotifier {
         'temperature': 0.2,
         'maxOutputTokens': maxOutputTokens,
         'topP': 0.8,
+        // Gemini 2.5 models spend maxOutputTokens on internal reasoning by
+        // default, starving the spoken answer. Force zero thinking budget so
+        // the whole cap is available for the user-facing text.
+        'thinkingConfig': {'thinkingBudget': 0},
       },
     };
 
@@ -424,6 +432,7 @@ class VertexAiService extends ChangeNotifier {
         'temperature': 0.2,
         'maxOutputTokens': maxOutputTokens,
         'topP': 0.8,
+        'thinkingConfig': {'thinkingBudget': 0},
       },
     };
   }
