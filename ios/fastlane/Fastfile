@@ -34,6 +34,13 @@ platform :ios do
       tts_define = " --dart-define=ELEVENLABS_TTS_WORKER_URL=\"$ELEVENLABS_TTS_WORKER_URL\""
     end
 
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: bundle_id,
+      team_id: "YP6X8QPR44",
+      force: true
+    )
+
     Dir.chdir(repo_root) do
       sh("#{flutter} --version")
       sh("#{flutter} pub get")
