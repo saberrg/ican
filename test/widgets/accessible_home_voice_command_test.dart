@@ -8,6 +8,7 @@ import 'package:ican/models/home_view_model.dart';
 import 'package:ican/models/settings_provider.dart';
 import 'package:ican/protocol/eye_capture_diagnostics.dart';
 import 'package:ican/screens/accessible_home_screen.dart';
+import 'package:ican/screens/settings_screen.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:ican/services/scene_description_service.dart';
 import 'package:ican/services/tts_service.dart';
@@ -18,18 +19,39 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('Home shows only the three demo flow actions', (tester) async {
+  testWidgets('Home shows the Glass Command demo path', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final vm = _buildHomeViewModel(_FakeTts());
 
     await tester.pumpWidget(_wrap(vm));
 
-    expect(find.text('Cloud Describe'), findsOneWidget);
+    expect(find.text('Eye'), findsOneWidget);
+    expect(find.text('Voice'), findsOneWidget);
+    expect(find.text('Vision'), findsOneWidget);
+    expect(find.text('Safety'), findsOneWidget);
+    expect(find.text('Cloud first'), findsWidgets);
+    expect(find.text('Local unavailable'), findsOneWidget);
+    expect(find.text('Describe'), findsOneWidget);
     expect(find.text('Offline Describe'), findsOneWidget);
-    expect(find.text('Start Live Detection'), findsOneWidget);
+    expect(find.text('Live Detection'), findsOneWidget);
     expect(find.text('Start Voice Command'), findsNothing);
     expect(find.textContaining('Settings'), findsNothing);
     expect(find.textContaining('iCan Cane'), findsNothing);
+
+    vm.dispose();
+  });
+
+  testWidgets('Home shows visible self-tuning feedback from settings changes', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final vm = _buildHomeViewModel(_FakeTts());
+
+    await tester.pumpWidget(_wrap(vm));
+    vm.settingsProvider.setDetailLevel(DetailLevel.detailed);
+    await tester.pump();
+
+    expect(find.text('Detail changed to Rich'), findsOneWidget);
 
     vm.dispose();
   });
@@ -65,6 +87,69 @@ void main() {
 
     vm.dispose();
   });
+
+  testWidgets('Home command center meets automated accessibility guidelines', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final vm = _buildHomeViewModel(_FakeTts());
+    final semantics = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(
+        _wrap(
+          vm,
+          mediaQuery: const MediaQueryData(
+            size: Size(320, 640),
+            textScaler: TextScaler.linear(1.25),
+          ),
+        ),
+      );
+
+      await expectLater(tester, meetsGuideline(iOSTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+      vm.dispose();
+    }
+  });
+
+  testWidgets(
+    'Settings shows visible tuning feedback on small large-text view',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final settings = SettingsProvider(ttsService: _FakeTts());
+      await tester.pumpWidget(
+        _wrapSettings(
+          settings,
+          mediaQuery: const MediaQueryData(
+            size: Size(320, 640),
+            textScaler: TextScaler.linear(1.25),
+          ),
+        ),
+      );
+
+      settings.setVolume(0.6);
+      await tester.pump();
+
+      expect(find.text('Volume changed to 60%'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      settings.dispose();
+    },
+  );
 }
 
 HomeViewModel _buildHomeViewModel(TtsSettingsController tts) {
@@ -79,14 +164,31 @@ HomeViewModel _buildHomeViewModel(TtsSettingsController tts) {
   );
 }
 
-Widget _wrap(HomeViewModel vm) {
+Widget _wrap(HomeViewModel vm, {MediaQueryData? mediaQuery}) {
   return ScreenUtilInit(
     designSize: const Size(375, 812),
     builder: (context, child) => ChangeNotifierProvider<HomeViewModel>.value(
       value: vm,
       child: MaterialApp(
         theme: ICanTheme.lightTheme,
-        home: const AccessibleHomeScreen(),
+        home: mediaQuery == null
+            ? const AccessibleHomeScreen()
+            : MediaQuery(data: mediaQuery, child: const AccessibleHomeScreen()),
+      ),
+    ),
+  );
+}
+
+Widget _wrapSettings(SettingsProvider settings, {MediaQueryData? mediaQuery}) {
+  return ScreenUtilInit(
+    designSize: const Size(375, 812),
+    builder: (context, child) => ChangeNotifierProvider<SettingsProvider>.value(
+      value: settings,
+      child: MaterialApp(
+        theme: ICanTheme.lightTheme,
+        home: mediaQuery == null
+            ? const SettingsScreen()
+            : MediaQuery(data: mediaQuery, child: const SettingsScreen()),
       ),
     ),
   );

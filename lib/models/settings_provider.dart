@@ -78,6 +78,9 @@ class SettingsProvider extends ChangeNotifier {
     _load();
   }
 
+  String _lastChangeSummary = '';
+  String get lastChangeSummary => _lastChangeSummary;
+
   // ── Audio ──
   double get speechRate => ttsService.rate;
   double get pitch => ttsService.pitch;
@@ -94,12 +97,14 @@ class SettingsProvider extends ChangeNotifier {
   void setSpeechRate(double rate) {
     ttsService.setRate(rate);
     _save('speech_rate', rate);
+    _recordChange('Speed changed to ${_rateToWpm(rate)} words per minute');
     notifyListeners();
   }
 
   void setPitch(double pitch) {
     ttsService.setPitch(pitch);
     _save('speech_pitch', pitch);
+    _recordChange('Pitch changed to ${pitch.toStringAsFixed(1)}');
     notifyListeners();
   }
 
@@ -107,12 +112,14 @@ class SettingsProvider extends ChangeNotifier {
     _volume = vol.clamp(0.0, 1.0);
     ttsService.setVolume(_volume);
     _save('volume', _volume);
+    _recordChange('Volume changed to ${(_volume * 100).round()}%');
     notifyListeners();
   }
 
   void setVoiceType(VoiceType type) {
     _voiceType = type;
     _save('voice_type', type.index);
+    _recordChange('Voice type changed to ${type.label}');
     notifyListeners();
   }
 
@@ -122,6 +129,7 @@ class SettingsProvider extends ChangeNotifier {
       (ttsService as SpeechEngineController).setSpeechEngine(engine);
     }
     _save('speech_engine', engine.name);
+    _recordChange('Speech engine changed to ${engine.label}');
     notifyListeners();
   }
 
@@ -141,6 +149,7 @@ class SettingsProvider extends ChangeNotifier {
     await _save('volume', 1.0);
     await _save('voice_type', VoiceType.neutral.index);
     await _save('speech_engine', SpeechEngine.nativeIos.name);
+    _recordChange('Speech defaults restored');
     notifyListeners();
   }
 
@@ -151,6 +160,7 @@ class SettingsProvider extends ChangeNotifier {
   Future<void> setVoiceOption(TtsVoiceOption voice) async {
     await ttsService.setVoice(voice);
     await _save('voice_id', voice.id);
+    _recordChange('Voice changed to ${voice.label}');
     notifyListeners();
   }
 
@@ -175,18 +185,21 @@ class SettingsProvider extends ChangeNotifier {
   void setDetailLevel(DetailLevel level) {
     _detailLevel = level;
     _save('detail_level', level.index);
+    _recordChange('Detail changed to ${level.label}');
     notifyListeners();
   }
 
   void setHazardSensitivity(HazardSensitivity sensitivity) {
     _hazardSensitivity = sensitivity;
     _save('hazard_sensitivity', sensitivity.index);
+    _recordChange('Hazard alerts changed to ${sensitivity.label}');
     notifyListeners();
   }
 
   void setPromptProfile(PromptProfile profile) {
     _promptProfile = profile;
     _save('prompt_profile', profile.index);
+    _recordChange('Focus changed to ${_promptFeedbackLabel(profile)}');
     notifyListeners();
   }
 
@@ -201,6 +214,7 @@ class SettingsProvider extends ChangeNotifier {
   void setLiveDetectionVerbosity(LiveDetectionVerbosity v) {
     _liveDetectionVerbosity = v;
     _save('live_detection_verbosity', v.index);
+    _recordChange('Live detection changed to ${v.label}');
     notifyListeners();
   }
 
@@ -216,18 +230,21 @@ class SettingsProvider extends ChangeNotifier {
   void setFontScale(FontScale scale) {
     _fontScale = scale;
     _save('font_scale', scale.index);
+    _recordChange('Text size changed to ${scale.label}');
     notifyListeners();
   }
 
   void setHighContrast(bool value) {
     _highContrast = value;
     _save('high_contrast', value);
+    _recordChange('High contrast ${value ? 'enabled' : 'disabled'}');
     notifyListeners();
   }
 
   void setReduceMotion(bool value) {
     _reduceMotion = value;
     _save('reduce_motion', value);
+    _recordChange('Reduce motion ${value ? 'enabled' : 'disabled'}');
     notifyListeners();
   }
 
@@ -323,4 +340,17 @@ class SettingsProvider extends ChangeNotifier {
 
   static int _rateToWpm(double rate) => (100 + (rate * 200)).round();
   static double wpmToRate(int wpm) => ((wpm - 100) / 200).clamp(0.0, 1.0);
+
+  void _recordChange(String summary) {
+    _lastChangeSummary = summary;
+  }
+
+  static String _promptFeedbackLabel(PromptProfile profile) {
+    return switch (profile) {
+      PromptProfile.balanced => 'Balanced',
+      PromptProfile.safety => 'Safety',
+      PromptProfile.navigation => 'Navigation',
+      PromptProfile.reading => 'Reading',
+    };
+  }
 }

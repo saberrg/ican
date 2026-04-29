@@ -77,6 +77,7 @@ class HomeViewModel extends ChangeNotifier {
   StreamSubscription<TelemetryPacket>? _telemetrySub;
   VoidCallback? _bleListener;
   VoidCallback? _sceneServiceListener;
+  VoidCallback? _settingsListener;
   Completer<String>? _describeNowCompleter;
   String _lastDiagnostic = '';
   DescribeAttemptTrace? _currentTrace;
@@ -168,6 +169,8 @@ class HomeViewModel extends ChangeNotifier {
 
     _sceneServiceListener = notifyListeners;
     sceneService.addListener(_sceneServiceListener!);
+    _settingsListener = notifyListeners;
+    settingsProvider.addListener(_settingsListener!);
     _liveController.addListener(notifyListeners);
 
     _obstacleSub = BleService.instance.obstacleStream.listen((alert) {
@@ -749,6 +752,9 @@ class HomeViewModel extends ChangeNotifier {
     }
     if (_sceneServiceListener != null) {
       sceneService.removeListener(_sceneServiceListener!);
+    }
+    if (_settingsListener != null) {
+      settingsProvider.removeListener(_settingsListener!);
     }
     _liveController.removeListener(notifyListeners);
     _liveController.dispose();

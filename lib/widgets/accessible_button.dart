@@ -208,7 +208,7 @@ class _AccessibleButtonState extends State<AccessibleButton> {
       isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE0E0E0);
 
   static Color _disabledFg(bool isDark) =>
-      isDark ? AppColors.disabledOnDark : AppColors.disabledOnLight;
+      isDark ? AppColors.textOnDark : AppColors.textOnLight;
 
   static Color _darken(Color color, double amount) {
     final hsl = HSLColor.fromColor(color);

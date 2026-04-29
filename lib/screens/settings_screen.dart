@@ -84,6 +84,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
                     const SizedBox(height: AppSpacing.sm),
+                    if (settings.lastChangeSummary.isNotEmpty) ...[
+                      _SettingsFeedbackBanner(
+                        summary: settings.lastChangeSummary,
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
 
                     // ── 1. Audio ──
                     _buildAudioSection(settings),
@@ -667,6 +673,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Section wrapper
 // ─────────────────────────────────────────────────────────────────────────────
+
+class _SettingsFeedbackBanner extends StatelessWidget {
+  const _SettingsFeedbackBanner({required this.summary});
+
+  final String summary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      label: 'Settings feedback. $summary.',
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: 12,
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEAF3FF),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.interactive),
+        ),
+        child: ExcludeSemantics(
+          child: Row(
+            children: [
+              const Icon(Icons.tune, color: AppColors.interactive),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  summary,
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textOnLight,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _Section extends StatelessWidget {
   final String title;

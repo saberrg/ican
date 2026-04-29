@@ -88,7 +88,7 @@ class AppTextStyles {
   static TextStyle get displayLarge => TextStyle(
     fontSize: 36.sp,
     fontWeight: FontWeight.bold,
-    letterSpacing: -0.5,
+    letterSpacing: 0,
     height: 1.2,
   );
 
@@ -181,6 +181,7 @@ class ICanTheme {
     );
 
     return ThemeData(
+      useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.backgroundLight,
       colorScheme: const ColorScheme.light(
@@ -443,6 +444,7 @@ class ICanTheme {
     );
 
     return ThemeData(
+      useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: AppColors.backgroundDark,
       colorScheme: const ColorScheme.dark(
