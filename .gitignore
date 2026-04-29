@@ -80,6 +80,7 @@ AuthKey_*.p8
 release.env
 .release.env
 ios/fastlane/.env*
+ios/ExportOptions.generated.plist
 
 # Android
 **/android/**/gradle-wrapper.jar

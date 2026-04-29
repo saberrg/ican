@@ -40,6 +40,32 @@ platform :ios do
       team_id: "YP6X8QPR44",
       force: true
     )
+    profile_name = lane_context[SharedValues::SIGH_NAME]
+    export_options_path = File.join(repo_root, "ios/ExportOptions.generated.plist")
+    File.write(export_options_path, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+          <key>method</key>
+          <string>app-store</string>
+          <key>teamID</key>
+          <string>YP6X8QPR44</string>
+          <key>signingStyle</key>
+          <string>manual</string>
+          <key>provisioningProfiles</key>
+          <dict>
+              <key>#{bundle_id}</key>
+              <string>#{profile_name}</string>
+          </dict>
+          <key>uploadBitcode</key>
+          <false/>
+          <key>uploadSymbols</key>
+          <true/>
+      </dict>
+      </plist>
+    PLIST
 
     Dir.chdir(repo_root) do
       sh("#{flutter} --version")
@@ -48,7 +74,7 @@ platform :ios do
       sh("#{flutter} analyze --no-fatal-infos --fatal-warnings")
       sh("#{flutter} test --no-pub")
       sh("rm -rf build/ios/archive build/ios/ipa")
-      sh("#{flutter} build ipa --release --build-number=#{build_number} --export-method app-store --dart-define=API_KEY=\"$ICAN_API_KEY\" --dart-define=IOS_BUNDLE_IDENTIFIER=#{bundle_id}#{tts_define}")
+      sh("#{flutter} build ipa --release --build-number=#{build_number} --export-options-plist=#{export_options_path} --dart-define=API_KEY=\"$ICAN_API_KEY\" --dart-define=IOS_BUNDLE_IDENTIFIER=#{bundle_id}#{tts_define}")
     end
 
     upload_to_testflight(
