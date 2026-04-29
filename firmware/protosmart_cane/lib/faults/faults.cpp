@@ -22,30 +22,8 @@ void checkFaults() {
         systemFaults.imu_fail = true;
     }
 
-    // Ultrasonic fault detection - check for valid distance readings
-    static uint8_t ultrasonicFailCount = 0;
-    bool ultrasonicValid = false;
-    for (uint8_t i = 0; i < NUM_ULTRASONIC_SENSORS; i++) {
-        if (currentSensors.ultrasonicDistances[i] != SENSOR_ERROR_DISTANCE) {
-            ultrasonicValid = true;
-            break;
-        }
-    }
-    if (!ultrasonicValid) {
-        ultrasonicFailCount++;
-    } else {
-        ultrasonicFailCount = 0;
-    }
-    systemFaults.ultrasonic_fail = (ultrasonicFailCount >= SENSOR_FAIL_THRESHOLD);
-
-    // Matrix sensor fault detection
-    static uint8_t matrixSensorFailCount = 0;
-    if (currentSensors.matrixSensorDistance == SENSOR_ERROR_DISTANCE) {
-        matrixSensorFailCount++;
-    } else {
-        matrixSensorFailCount = 0;
-    }
-    systemFaults.matrixSensor_fail = (matrixSensorFailCount >= SENSOR_FAIL_THRESHOLD);
+    // Ranging sensors report SENSOR_ERROR_DISTANCE when no obstacle is in range.
+    // Treat only module-level read/init failures as recoverable sensor faults.
 
     // Heart sensor auto-recovery disabled for now.
     // During normal use the pulse signal can legitimately be absent/noisy,

@@ -210,7 +210,7 @@ void matrixSensorUpdate() {
         currentSensors.matrixSensorZone = OBSTACLE_NONE;
         previousZone = OBSTACLE_NONE;
         zoneConfirmationCounter = 0;
-        systemFaults.matrixSensor_fail = true;
+        systemFaults.matrixSensor_fail = false;
     }
 }
 

@@ -63,7 +63,7 @@
 #define IMU_CHANNEL 2
 
 // === 8x8 MATRIX SENSOR CONFIGURATION ===
-#define MATRIX_SENSOR_MAX_DISTANCE_MM 800   // mm - ignore far readings beyond useful range
+#define MATRIX_SENSOR_MAX_DISTANCE_MM 1000  // mm - ignore far readings beyond useful range
 #define MATRIX_SENSOR_ZONE_THRESHOLD_MM 1000 // mm - use this for far obstacle classification
 #define MATRIX_SENSOR_INIT_RETRY_DELAY_MS 200 // keep failed recovery attempts responsive
 
@@ -83,7 +83,7 @@
 
 // === ULTRASONIC CONFIGURATION ===
 #define NUM_ULTRASONIC_SENSORS 2         // Number of ultrasonic sensors
-#define ULTRASONIC_MAX_RANGE_MM 800      // Experimental feedback range
+#define ULTRASONIC_MAX_RANGE_MM 1000     // Experimental feedback range
 
 // === HEART RATE MONITORING ===
 #define HEART_THRESHOLD 2000             // PulseSensor threshold

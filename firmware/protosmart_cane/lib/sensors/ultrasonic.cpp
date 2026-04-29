@@ -59,14 +59,8 @@ void ultrasonicUpdate() {
         }
     }
 
-    // Mark sensor as working if at least one reading is valid
-    systemFaults.ultrasonic_fail = true;  // Assume failure
-    for (uint8_t i = 0; i < NUM_ULTRASONIC_SENSORS; i++) {
-        if (currentSensors.ultrasonicDistances[i] != SENSOR_ERROR_DISTANCE) {
-            systemFaults.ultrasonic_fail = false;
-            break;
-        }
-    }
+    // No echo usually means no object in range, not a hardware fault.
+    systemFaults.ultrasonic_fail = false;
 }
 
 uint16_t readUltrasonicDistance(uint8_t sensorIndex) {

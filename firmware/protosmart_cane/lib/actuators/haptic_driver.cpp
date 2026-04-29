@@ -14,7 +14,7 @@ uint8_t hapticIntensity = 0;
 unsigned long lastHapticPulse = 0;
 uint16_t hapticPulseInterval = 0;
 
-#define HAPTIC_DETECTION_LOGIC_MAX_MM 800
+#define HAPTIC_DETECTION_LOGIC_MAX_MM 1000
 #define HAPTIC_DETECTION_LOGIC_MIN_MM 400
 #define HAPTIC_DETECTION_LOGIC_INVALID_MM 9999
 #define HAPTIC_DETECTION_LOGIC_ON_INTENSITY HAPTIC_MEDIUM
@@ -38,6 +38,15 @@ static unsigned long headTimer = 0;
 static unsigned long waistTimer = 0;
 static bool headState = false;
 static bool waistState = false;
+
+enum WaistHapticTarget {
+    WAIST_TARGET_NONE,
+    WAIST_TARGET_FRONT,
+    WAIST_TARGET_LEFT,
+    WAIST_TARGET_RIGHT
+};
+
+static WaistHapticTarget waistTarget = WAIST_TARGET_NONE;
 
 void hapticDriverInit() {
     // Diagnostic: I2C bus scan to find what devices are present
@@ -237,6 +246,17 @@ void updateHapticFeedback() {
                        HAPTIC_DETECTION_LOGIC_INVALID_MM;
 
     uint16_t closest = min(frontMm, min(leftMm, rightMm));
+    WaistHapticTarget nextWaistTarget = WAIST_TARGET_NONE;
+    if (closest < HAPTIC_DETECTION_LOGIC_INVALID_MM) {
+        if (closest == frontMm) {
+            nextWaistTarget = WAIST_TARGET_FRONT;
+        } else if (closest == leftMm) {
+            nextWaistTarget = WAIST_TARGET_LEFT;
+        } else if (closest == rightMm) {
+            nextWaistTarget = WAIST_TARGET_RIGHT;
+        }
+    }
+
     unsigned long interval = 500;
     if (closest < HAPTIC_DETECTION_LOGIC_INVALID_MM) {
         uint16_t constrainedDistance = max<uint16_t>(closest, HAPTIC_DETECTION_LOGIC_MIN_MM);
@@ -249,6 +269,16 @@ void updateHapticFeedback() {
 
     unsigned long now = millis();
 
+    if (nextWaistTarget != waistTarget) {
+        waistTarget = nextWaistTarget;
+        waistState = false;
+        hapticStop(DRIVER_LEFT);
+        hapticStop(DRIVER_RIGHT);
+        if (waistTarget != WAIST_TARGET_NONE) {
+            waistTimer = now - interval;
+        }
+    }
+
     if (headDetected) {
         if (now - headTimer >= interval) {
             headTimer = now;
@@ -260,7 +290,7 @@ void updateHapticFeedback() {
         hapticStop(DRIVER_HEAD);
     }
 
-    if (closest < HAPTIC_DETECTION_LOGIC_INVALID_MM) {
+    if (waistTarget != WAIST_TARGET_NONE) {
         if (now - waistTimer >= interval) {
             waistTimer = now;
             waistState = !waistState;
@@ -268,17 +298,18 @@ void updateHapticFeedback() {
             hapticStop(DRIVER_LEFT);
             hapticStop(DRIVER_RIGHT);
 
-            if (closest == frontMm) {
+            if (waistTarget == WAIST_TARGET_FRONT) {
                 hapticSet(DRIVER_LEFT, waistState ? HAPTIC_DETECTION_LOGIC_ON_INTENSITY : HAPTIC_OFF);
                 hapticSet(DRIVER_RIGHT, waistState ? HAPTIC_DETECTION_LOGIC_ON_INTENSITY : HAPTIC_OFF);
-            } else if (closest == leftMm) {
+            } else if (waistTarget == WAIST_TARGET_LEFT) {
                 hapticSet(DRIVER_LEFT, waistState ? HAPTIC_DETECTION_LOGIC_ON_INTENSITY : HAPTIC_OFF);
-            } else if (closest == rightMm) {
+            } else if (waistTarget == WAIST_TARGET_RIGHT) {
                 hapticSet(DRIVER_RIGHT, waistState ? HAPTIC_DETECTION_LOGIC_ON_INTENSITY : HAPTIC_OFF);
             }
         }
     } else {
         waistState = false;
+        waistTarget = WAIST_TARGET_NONE;
         hapticStop(DRIVER_LEFT);
         hapticStop(DRIVER_RIGHT);
     }
