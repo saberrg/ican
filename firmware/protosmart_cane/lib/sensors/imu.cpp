@@ -20,6 +20,7 @@ enum FallState {
 static FallState fallState = FALL_STATE_NORMAL;
 static unsigned long freeFallStartTime = 0;
 static unsigned long lastFallTime = 0;
+static unsigned long fallFlagSetTime = 0;
 static unsigned long lastMotionTime = 0;
 
 void imuInit() {
@@ -93,6 +94,7 @@ void imuUpdate() {
                     currentSituation = FALL_DETECTED;
                     currentEmergencyType = EMERGENCY_FALL;
                     lastFallTime = now;
+                    fallFlagSetTime = now;
                     fallState = FALL_STATE_NORMAL;
                 }
             } else {
@@ -100,6 +102,15 @@ void imuUpdate() {
             }
             break;
         }
+
+    if (currentSituation == FALL_DETECTED &&
+        fallFlagSetTime != 0 &&
+        now - fallFlagSetTime >= FALL_FLAG_HOLD_MS) {
+        currentSituation = NONE;
+        currentEmergencyType = EMERGENCY_NONE;
+        fallFlagSetTime = 0;
+        if (DEBUG_MODE) Serial.println("fallDetectedGlobal = FALSE");
+    }
 
     // Track motion for inactivity detection
     if (accelMagG > 1.0f) {  // Some motion detected

@@ -75,6 +75,7 @@
 #define FALL_IMPACT_WINDOW 500           // ms - max time between freefall and impact
 #define FALL_INACTIVITY_TIMEOUT 2000     // ms - inactivity detection
 #define FALL_COOLDOWN 2000               // ms - prevent fall spam detection
+#define FALL_FLAG_HOLD_MS 2000           // ms - keep BLE fall flag high after detection
 
 // === OBSTACLE DETECTION THRESHOLDS ===
 #define OBSTACLE_FAR_MM 1000             // mm - far obstacle detection
@@ -84,6 +85,7 @@
 // === ULTRASONIC CONFIGURATION ===
 #define NUM_ULTRASONIC_SENSORS 2         // Number of ultrasonic sensors
 #define ULTRASONIC_MAX_RANGE_MM 1000     // Experimental feedback range
+#define ULTRASONIC_TIMEOUT_US 13000      // Echo timeout; keeps left/right reads responsive
 
 // === HEART RATE MONITORING ===
 #define HEART_THRESHOLD 2000             // PulseSensor threshold
@@ -110,10 +112,10 @@
 #define EMERGENCY_INITIAL_INTENSITY_MS 3000  // 3 seconds of max intensity
 
 // === POWER MODE SAMPLING RATES (ms intervals) ===
-// NORMAL MODE: 20 Hz IMU, 15 Hz ultrasonic, 20 Hz LiDAR, 10 Hz pulse
-#define NORMAL_IMU_INTERVAL 50           // 20 Hz  (responsive motion + fall detection)
-#define NORMAL_ULTRASONIC_INTERVAL 67    // 15 Hz  (frequent proximity checks)
-#define NORMAL_MATRIX_SENSOR_INTERVAL 50         // 20 Hz  (rapid forward updates)
+// NORMAL MODE: ~80 Hz IMU, 25 Hz ultrasonic, 30 Hz LiDAR, 10 Hz pulse
+#define NORMAL_IMU_INTERVAL 12           // ~80 Hz (responsive motion + fall detection)
+#define NORMAL_ULTRASONIC_INTERVAL 40    // 25 Hz  (frequent proximity checks)
+#define NORMAL_MATRIX_SENSOR_INTERVAL 33 // 30 Hz  (rapid forward updates)
 #define NORMAL_PULSE_INTERVAL 100        // 10 Hz  (real-time stress capability)
 #define NORMAL_BATTERY_CHECK_INTERVAL 2000  // 2 seconds (increased frequency)
 

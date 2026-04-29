@@ -12,8 +12,8 @@ static uint16_t triggerUltrasonic(uint8_t trigPin, uint8_t echoPin) {
     digitalWrite(trigPin, HIGH);
     delayMicroseconds(10);
 
-    unsigned long duration = pulseIn(echoPin, LOW, 50000);
-    if (duration == 0 || duration >= 50000) {
+    unsigned long duration = pulseIn(echoPin, LOW, ULTRASONIC_TIMEOUT_US);
+    if (duration == 0 || duration >= ULTRASONIC_TIMEOUT_US) {
         return SENSOR_ERROR_DISTANCE;
     }
 
