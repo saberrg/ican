@@ -27,7 +27,7 @@ jobs:
     name: Build and upload TestFlight
     runs-on: [self-hosted, macOS, ican-ios]
     timeout-minutes: 90
-    environment: testflight
+    environment: x
     env:
       BUILD_NUMBER: ${{ inputs.build_number || github.ref_name }}
       RELEASE_NOTES: ${{ inputs.release_notes || github.ref_name }}

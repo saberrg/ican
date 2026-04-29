@@ -59,7 +59,7 @@ Agent connection model:
 
 ## Required Secrets
 
-Add these to GitHub Actions secrets for the `testflight` environment or the repo:
+Add these to GitHub Actions secrets for the `x` environment or the repo:
 
 - `ICAN_API_KEY`
 - `ASC_KEY_ID`
@@ -71,7 +71,7 @@ Do not commit `.env`, `.p8`, `.p12`, `.cer`, provisioning profiles, private
 keys, passwords, raw Apple account output, or API key values.
 
 For fully hands-free TestFlight uploads, leave `Required reviewers` disabled on
-the `testflight` environment. If reviewers are enabled, GitHub will pause every
+the `x` environment. If reviewers are enabled, GitHub will pause every
 release until a human approves the deployment.
 
 For local development, keep the Gemini key in the shell or an untracked `.env`:
