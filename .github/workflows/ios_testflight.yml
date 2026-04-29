@@ -27,7 +27,7 @@ jobs:
     name: Build and upload TestFlight
     runs-on: [self-hosted, macOS, ican-ios]
     timeout-minutes: 90
-    environment: testflight
+    environment: x
     env:
       BUILD_NUMBER: ${{ inputs.build_number || github.ref_name }}
       RELEASE_NOTES: ${{ inputs.release_notes || github.ref_name }}
@@ -49,6 +49,12 @@ jobs:
       - name: Prepare release scripts
         shell: bash
         run: chmod +x scripts/macos_setup.sh scripts/macos_release.sh
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
 
       - name: Verify Mac runner
         shell: bash
