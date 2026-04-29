@@ -50,6 +50,11 @@ jobs:
         shell: bash
         run: chmod +x scripts/macos_setup.sh scripts/macos_release.sh
 
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:

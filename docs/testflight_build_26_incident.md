@@ -28,6 +28,10 @@ TestFlight upload did not complete.
   self-hosted Mac required Bundler `4.0.3`.
 - The release scripts now remove an untracked root `Gemfile.lock` before
   running Bundler, because this repo does not track that file.
+- After that cleanup, the Mac runner failed dependency resolution because it
+  was using Apple system Ruby `2.6.10`, while the current Fastlane/CocoaPods
+  dependency chain pulled `ffi`, which requires Ruby `>= 3.0`.
+- The workflow now installs Ruby `3.3` before running Bundler.
 
 ## Root Causes
 
@@ -38,11 +42,14 @@ TestFlight upload did not complete.
   deploy there.
 - The self-hosted Mac workspace preserved a stale untracked `Gemfile.lock`
   because checkout used `clean: false`.
+- The self-hosted Mac was relying on obsolete system Ruby instead of a pinned
+  CI Ruby.
 
 ## Fixes Applied
 
 - `.github/workflows/ios_testflight.yml`
   - Uses GitHub environment `x`.
+  - Installs Ruby `3.3` before Bundler runs.
   - Installs Flutter before running Mac setup checks.
   - Triggers on `release/testflight-build-*` branch pushes.
 - `scripts/macos_release.sh`
