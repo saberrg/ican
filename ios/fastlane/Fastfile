@@ -1,5 +1,7 @@
 default_platform(:ios)
 
+repo_root = File.expand_path("../..", __dir__)
+
 platform :ios do
   desc "Validate, build, and upload iCan to TestFlight"
   lane :testflight do |options|
@@ -32,7 +34,7 @@ platform :ios do
       tts_define = " --dart-define=ELEVENLABS_TTS_WORKER_URL=\"$ELEVENLABS_TTS_WORKER_URL\""
     end
 
-    Dir.chdir("..") do
+    Dir.chdir(repo_root) do
       sh("#{flutter} --version")
       sh("#{flutter} pub get")
       sh("dart format --output=none --set-exit-if-changed lib test")
@@ -44,7 +46,7 @@ platform :ios do
 
     upload_to_testflight(
       api_key: api_key,
-      ipa: "../build/ios/ipa/iCan.ipa",
+      ipa: File.join(repo_root, "build/ios/ipa/iCan.ipa"),
       changelog: release_notes.to_s.strip.empty? ? nil : release_notes,
       skip_waiting_for_build_processing: true
     )
