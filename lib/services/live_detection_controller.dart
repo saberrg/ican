@@ -8,6 +8,7 @@ import 'ble_service.dart';
 import 'livex_stream_service.dart';
 import 'on_device_vision_service.dart';
 import 'tts_service.dart';
+import 'udp_frame_service.dart';
 
 enum LiveDetectionState { idle, starting, running, stopping, error }
 
@@ -53,6 +54,38 @@ class LiveDetectionController extends ChangeNotifier {
       _state == LiveDetectionState.running;
   String get lastMessage => _lastMessage;
   String? get lastError => _lastError;
+
+  /// Yields JPEG frames from whichever live source is currently active:
+  /// UDP when [UdpFrameService] is running (WiFi ready), otherwise the BLE
+  /// image stream. Re-selects source on every WiFi status transition.
+  Stream<Uint8List> get activeFrameStream {
+    final ble = BleService.instance;
+    final udp = UdpFrameService.instance;
+
+    late StreamController<Uint8List> controller;
+    StreamSubscription<Uint8List>? sub;
+    StreamSubscription<EyeWifiStatus>? wifiSub;
+
+    void switchSource() {
+      sub?.cancel();
+      final source = udp.isActive ? udp.frameStream : ble.imageStream;
+      sub = source.listen(controller.add, onError: controller.addError);
+    }
+
+    controller = StreamController<Uint8List>.broadcast(
+      onListen: () {
+        switchSource();
+        wifiSub = ble.wifiStatusStream.listen((_) => switchSource());
+      },
+      onCancel: () {
+        sub?.cancel();
+        wifiSub?.cancel();
+        sub = null;
+        wifiSub = null;
+      },
+    );
+    return controller.stream;
+  }
 
   Future<void> start() async {
     if (active || _state == LiveDetectionState.stopping) return;

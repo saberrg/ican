@@ -76,6 +76,7 @@ characteristics:
       STATUS: "Request current status"
       ACK_FRAME: "Acknowledge a completed v2 image frame. Format: ACK_FRAME:{frameId}"
       NACK_FRAME: "Request retransmit of missing/corrupt v2 chunks. Format: NACK_FRAME:{frameId}:{ranges}, where ranges is comma-separated seq or start-end."
+      WIFI: "Provision WiFi credentials so the Eye can switch from BLE image chunking to UDP live-frame streaming. Format: WIFI:{ssid};{password}. Eye replies with WIFI_TRYING, then WIFI_OK:{ip} or WIFI_FAIL[:reason]."
     events:
       "CAPTURE:START": "Firmware accepted a capture request and is attempting camera capture."
       "BUTTON:SINGLE": "Physical button single press detected (Eye -> App). App executes the active Cloud, Local, or Live mode."
@@ -97,6 +98,9 @@ characteristics:
       "ERR:FRAME_CACHE_UNAVAILABLE": "Firmware could not allocate a retransmit cache for the frame."
       "ERR:RETRANSMIT_UNAVAILABLE:{frameId}": "Firmware no longer has the requested frame cached."
       "ERR:{code}": "Firmware command error."
+      "WIFI_TRYING": "Eye accepted WIFI: provisioning and is attempting association."
+      "WIFI_OK:{ip}": "Eye successfully joined the access point. App opens UDP receiver on port 8080 and starts consuming JPEG frames from {ip}."
+      "WIFI_FAIL[:reason]": "Eye failed to join. Optional trailing reason (e.g. auth, timeout, no_ssid). App reverts to BLE image streaming."
 
   gps_data_tx:
     service: cane

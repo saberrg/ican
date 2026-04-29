@@ -33,6 +33,13 @@ Future<void> main() async {
       AppLogService.instance.installDebugPrintHook();
       await AppLogService.instance.record('App startup begin', source: 'main');
 
+      if (const String.fromEnvironment('API_KEY').isEmpty) {
+        await AppLogService.instance.record(
+          'API_KEY not set at build time',
+          source: 'main',
+        );
+      }
+
       FlutterError.onError = (details) {
         debugPrint('[FlutterError] ${details.exceptionAsString()}');
         unawaited(

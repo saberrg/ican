@@ -10,6 +10,28 @@ import 'app_log_service.dart';
 import 'device_prefs_service.dart';
 import 'notification_service.dart';
 import 'tts_service.dart';
+import 'udp_frame_service.dart';
+
+/// ============================================================================
+/// Eye WiFi provisioning state (exposed via BleService.wifiStatusStream).
+/// ============================================================================
+enum EyeWifiState { idle, trying, ready, failed }
+
+class EyeWifiStatus {
+  const EyeWifiStatus({
+    required this.state,
+    this.ipAddress,
+    this.failureReason,
+  });
+
+  final EyeWifiState state;
+  final String? ipAddress;
+  final String? failureReason;
+
+  @override
+  String toString() =>
+      'EyeWifiStatus(state=$state, ip=$ipAddress, reason=$failureReason)';
+}
 
 /// BLE connection status.
 enum BleConnectionState { disconnected, scanning, connecting, connected }
@@ -304,6 +326,16 @@ class BleService extends ChangeNotifier {
   // Button events from Eye (double-press triggers voice commands)
   final _buttonEventController = StreamController<String>.broadcast();
   Stream<String> get buttonEventStream => _buttonEventController.stream;
+
+  // Eye WiFi provisioning state (drives UDP live-frame handoff)
+  EyeWifiStatus _wifiStatus = const EyeWifiStatus(state: EyeWifiState.idle);
+  final _wifiStatusController = StreamController<EyeWifiStatus>.broadcast();
+  Stream<EyeWifiStatus> get wifiStatusStream => _wifiStatusController.stream;
+  EyeWifiStatus get currentWifiStatus => _wifiStatus;
+  void _updateWifiStatus(EyeWifiStatus s) {
+    _wifiStatus = s;
+    _wifiStatusController.add(s);
+  }
 
   // GPS data stream from Cane
   final _gpsController = StreamController<GpsPacket>.broadcast();
@@ -1606,6 +1638,40 @@ class BleService extends ChangeNotifier {
       return;
     }
 
+    if (message.startsWith(EyeEvents.wifiOkPrefix)) {
+      final ip = message.substring(EyeEvents.wifiOkPrefix.length).trim();
+      _updateWifiStatus(
+        EyeWifiStatus(
+          state: EyeWifiState.ready,
+          ipAddress: ip.isEmpty ? null : ip,
+        ),
+      );
+      unawaited(UdpFrameService.instance.start());
+      return;
+    }
+
+    if (message.startsWith(EyeEvents.wifiFailPrefix) ||
+        message == EyeEvents.wifiFail) {
+      String? reason;
+      if (message.startsWith(EyeEvents.wifiFailPrefix)) {
+        final trailing = message
+            .substring(EyeEvents.wifiFailPrefix.length)
+            .trim();
+        if (trailing.isNotEmpty) reason = trailing;
+      }
+      _updateWifiStatus(
+        EyeWifiStatus(state: EyeWifiState.failed, failureReason: reason),
+      );
+      unawaited(UdpFrameService.instance.stop());
+      return;
+    }
+
+    if (message == EyeEvents.wifiTrying ||
+        message.startsWith('${EyeEvents.wifiTrying}:')) {
+      _updateWifiStatus(const EyeWifiStatus(state: EyeWifiState.trying));
+      return;
+    }
+
     if (message.startsWith('HAZARD:')) {
       final hazardText = message.substring('HAZARD:'.length).trim();
       TtsService.instance.speak(hazardText);
@@ -2054,6 +2120,17 @@ class BleService extends ChangeNotifier {
     }
   }
 
+  /// Provision WiFi credentials on the Eye so it can push JPEG frames over UDP
+  /// instead of BLE. Optimistically marks status as `trying` until the Eye
+  /// replies with `WIFI_OK:<ip>` or `WIFI_FAIL[:reason]`.
+  Future<void> configureWifi({
+    required String ssid,
+    required String password,
+  }) async {
+    _updateWifiStatus(const EyeWifiStatus(state: EyeWifiState.trying));
+    await _sendEyeCommand(EyeCommands.wifi(ssid, password));
+  }
+
   /// Remotely trigger a single image capture on the Eye.
   Future<void> triggerEyeCapture() {
     _imageAssembler.beginCaptureCommand();
@@ -2404,6 +2481,10 @@ class BleService extends ChangeNotifier {
       _currentEyeProfileIndex = null;
       _currentEyeProfileName = null;
       _updateEyeReadiness(BleReadinessPhase.idle);
+      if (_wifiStatus.state != EyeWifiState.idle) {
+        _updateWifiStatus(const EyeWifiStatus(state: EyeWifiState.idle));
+      }
+      unawaited(UdpFrameService.instance.stop());
     }
     notifyListeners();
   }
@@ -2477,7 +2558,9 @@ class BleService extends ChangeNotifier {
     _connectionEventController.close();
     _captureStartedController.close();
     _buttonEventController.close();
+    _wifiStatusController.close();
     _gpsController.close();
+    unawaited(UdpFrameService.instance.stop());
     super.dispose();
   }
 }

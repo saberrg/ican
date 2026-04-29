@@ -197,6 +197,12 @@ class EyeCommands {
   static String ackFrame(int frameId) => 'ACK_FRAME:$frameId';
   static String nackFrame(int frameId, String ranges) =>
       'NACK_FRAME:$frameId:$ranges';
+
+  /// Phone → Eye: provision WiFi credentials so the Eye switches to UDP live
+  /// frame streaming. Payload format: `WIFI:<ssid>;<password>`.
+  static const String wifiPrefix = 'WIFI:';
+  static String wifi(String ssid, String password) =>
+      '$wifiPrefix$ssid;$password';
 }
 
 class EyeProfileIndex {
@@ -247,6 +253,16 @@ class EyeEvents {
 
   /// Firmware appends this reason when aborting due to an ABORT command.
   static const String abortReasonUser = 'user';
+
+  /// Eye → App: WiFi provisioning attempt has started; credentials received.
+  static const String wifiTrying = 'WIFI_TRYING';
+
+  /// Eye → App: WiFi associated successfully; payload is `WIFI_OK:<ip>`.
+  static const String wifiOkPrefix = 'WIFI_OK:';
+
+  /// Eye → App: WiFi provisioning failed. Optional trailing `:reason`.
+  static const String wifiFail = 'WIFI_FAIL';
+  static const String wifiFailPrefix = 'WIFI_FAIL:';
 }
 
 // ===========================================================================

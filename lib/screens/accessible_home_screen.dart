@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/theme.dart';
 import '../main.dart' show voiceCommandService;
@@ -79,10 +81,17 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const _ApiKeyWarningBanner(),
                   const _HomeHeader(),
                   const SizedBox(height: AppSpacing.sm),
                   _StatusBand(vm: vm, voiceCommands: voiceCommands),
                   const SizedBox(height: AppSpacing.sm),
+                  const _EyeWifiRow(),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (vm.liveVisionActive) ...[
+                    const _LivePreview(),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
                   _ModeChips(vm: vm, settings: settings),
                   const SizedBox(height: AppSpacing.sm),
                   _VoiceCommandPanel(service: voiceCommands),
@@ -586,6 +595,8 @@ class _DescriptionPanel extends StatelessWidget {
                       ),
                     ),
                   ),
+                  _BackendPill(backend: vm.lastBackend),
+                  const SizedBox(width: AppSpacing.xs),
                   _StateBadge(label: state, busy: vm.isProcessing),
                 ],
               ),
@@ -823,6 +834,400 @@ class _ModeSelectButton extends StatelessWidget {
               icon: Icon(icon),
               label: Text(label),
             ),
+    );
+  }
+}
+
+class _ApiKeyWarningBanner extends StatelessWidget {
+  const _ApiKeyWarningBanner();
+
+  static const String _apiKey = String.fromEnvironment('API_KEY');
+
+  @override
+  Widget build(BuildContext context) {
+    if (_apiKey.isNotEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Semantics(
+        liveRegion: true,
+        label: 'Cloud vision disabled: API key missing at build time.',
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: 12,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF4E5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.error, width: 2),
+          ),
+          child: ExcludeSemantics(
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: AppColors.error),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    'Cloud vision disabled: API key missing at build time.',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textOnLight,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ───────────────────────── Eye WiFi provisioning ─────────────────────────
+
+class _EyeWifiRow extends StatefulWidget {
+  const _EyeWifiRow();
+
+  @override
+  State<_EyeWifiRow> createState() => _EyeWifiRowState();
+}
+
+class _EyeWifiRowState extends State<_EyeWifiRow> {
+  static const String _ssidPrefKey = 'eye_wifi_ssid';
+  static const String _passwordPrefKey = 'eye_wifi_password';
+
+  final TextEditingController _ssidCtrl = TextEditingController();
+  final TextEditingController _passwordCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSavedCredentials());
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _ssidCtrl.text = prefs.getString(_ssidPrefKey) ?? '';
+        _passwordCtrl.text = prefs.getString(_passwordPrefKey) ?? '';
+      });
+    } catch (_) {
+      // If prefs fail, the fields just stay blank; user can retype.
+    }
+  }
+
+  Future<void> _sendWifi() async {
+    final ssid = _ssidCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (ssid.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_ssidPrefKey, ssid);
+      await prefs.setString(_passwordPrefKey, password);
+    } catch (_) {}
+    unawaited(
+      BleService.instance.configureWifi(ssid: ssid, password: password),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ssidCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<HomeViewModel>();
+    final status = vm.wifiStatus;
+
+    if (status.state == EyeWifiState.ready) {
+      return _ReadyPill(ip: status.ipAddress ?? 'unknown');
+    }
+
+    if (!vm.isEyeConnected) {
+      return const SizedBox.shrink();
+    }
+
+    final trying = status.state == EyeWifiState.trying;
+    final failed = status.state == EyeWifiState.failed;
+
+    return Semantics(
+      label: 'Eye WiFi provisioning',
+      liveRegion: trying || failed,
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceCardLight,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Provision Eye WiFi',
+              style: TextStyle(
+                fontSize: 15.sp,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textSecondaryOnLight,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TextField(
+              controller: _ssidCtrl,
+              enabled: !trying,
+              decoration: const InputDecoration(
+                labelText: 'Hotspot SSID',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              style: TextStyle(fontSize: 16.sp),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TextField(
+              controller: _passwordCtrl,
+              enabled: !trying,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              style: TextStyle(fontSize: 16.sp),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                if (trying) ...[
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    'Provisioning Eye...',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      color: AppColors.textSecondaryOnLight,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                ],
+                Semantics(
+                  button: true,
+                  label: 'Send WiFi credentials to Eye',
+                  child: FilledButton.icon(
+                    onPressed: trying ? null : _sendWifi,
+                    icon: const Icon(Icons.wifi),
+                    label: const Text('Send to Eye'),
+                  ),
+                ),
+              ],
+            ),
+            if (failed && status.failureReason != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                status.failureReason!,
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  color: AppColors.error,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReadyPill extends StatelessWidget {
+  const _ReadyPill({required this.ip});
+
+  final String ip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Eye on WiFi. IP address $ip.',
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 56),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppColors.backgroundLight,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppColors.success, width: 2),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.wifi, color: AppColors.success, size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Eye on WiFi — $ip',
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    color: AppColors.success,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ───────────────────────── Live frame preview ─────────────────────────
+
+class _LivePreview extends StatefulWidget {
+  const _LivePreview();
+
+  @override
+  State<_LivePreview> createState() => _LivePreviewState();
+}
+
+class _LivePreviewState extends State<_LivePreview> {
+  StreamSubscription<Uint8List>? _frameSub;
+  Uint8List? _latestBytes;
+  DateTime _lastUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  static const Duration _throttle = Duration(milliseconds: 100);
+
+  @override
+  void initState() {
+    super.initState();
+    final vm = context.read<HomeViewModel>();
+    _frameSub = vm.activeFrameStream.listen(_onFrame);
+  }
+
+  void _onFrame(Uint8List bytes) {
+    final now = DateTime.now();
+    if (now.difference(_lastUiUpdate) < _throttle) {
+      // Still stash latest bytes so the next tick has the freshest frame.
+      _latestBytes = bytes;
+      return;
+    }
+    _lastUiUpdate = now;
+    if (!mounted) return;
+    setState(() {
+      _latestBytes = bytes;
+    });
+  }
+
+  @override
+  void dispose() {
+    _frameSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _latestBytes;
+    return Semantics(
+      label: 'Live Eye camera preview',
+      image: true,
+      child: Container(
+        height: 160,
+        decoration: BoxDecoration(
+          color: AppColors.surfaceCardLight,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: bytes == null
+              ? Center(
+                  child: Text(
+                    'Waiting for live frames...',
+                    style: TextStyle(
+                      fontSize: 15.sp,
+                      color: AppColors.textSecondaryOnLight,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                )
+              : ExcludeSemantics(
+                  child: Image.memory(
+                    bytes,
+                    gaplessPlayback: true,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: 160,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+// ───────────────────────── Backend pill ─────────────────────────
+
+class _BackendPill extends StatelessWidget {
+  const _BackendPill({required this.backend});
+
+  final VisionBackend? backend;
+
+  @override
+  Widget build(BuildContext context) {
+    final b = backend;
+    if (b == null) return const SizedBox.shrink();
+
+    final name = switch (b) {
+      VisionBackend.cloud => 'Gemini',
+      VisionBackend.foundationModels => 'Foundation',
+      VisionBackend.vlm => 'SmolVLM2',
+      VisionBackend.visionOnly => 'Vision',
+    };
+    final isCloud = b == VisionBackend.cloud;
+    final icon = isCloud ? Icons.cloud_outlined : Icons.phone_iphone;
+    final color = isCloud
+        ? AppColors.interactive
+        : AppColors.textSecondaryOnLight;
+
+    return Semantics(
+      label: 'Last analyzed with $name',
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 24),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.backgroundLight,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: color),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 14),
+              const SizedBox(width: 4),
+              Text(
+                name,
+                style: TextStyle(
+                  fontSize: 12.sp,
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

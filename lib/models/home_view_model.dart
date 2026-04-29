@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
@@ -80,6 +81,7 @@ class HomeViewModel extends ChangeNotifier {
   StreamSubscription<String>? _buttonSub;
   StreamSubscription<void>? _captureSub;
   StreamSubscription<TelemetryPacket>? _telemetrySub;
+  StreamSubscription<EyeWifiStatus>? _wifiStatusSub;
   VoidCallback? _bleListener;
   VoidCallback? _sceneServiceListener;
   VoidCallback? _settingsListener;
@@ -91,9 +93,18 @@ class HomeViewModel extends ChangeNotifier {
 
   // ── Live vision mode state ──
   bool get liveVisionActive => _liveController.active;
+  Stream<Uint8List> get activeFrameStream => _liveController.activeFrameStream;
   final OnDeviceVisionService _onDeviceVision = OnDeviceVisionService();
   OfflineVisionStatus? _offlineVisionStatus;
   VisionRuntimeStatus? _visionRuntimeStatus;
+
+  // ── Eye WiFi provisioning state ──
+  EyeWifiStatus get wifiStatus => BleService.instance.currentWifiStatus;
+  Stream<EyeWifiStatus> get wifiStatusStream =>
+      BleService.instance.wifiStatusStream;
+
+  // ── Last vision backend used ──
+  VisionBackend? get lastBackend => sceneService.lastBackend;
 
   // ── Public getters ──
   BleConnectionState get caneConnection => BleService.instance.caneState;
@@ -244,6 +255,11 @@ class HomeViewModel extends ChangeNotifier {
       } else if (event == EyeEvents.buttonLong) {
         unawaited(cycleVisionControlMode());
       }
+    });
+
+    _wifiStatusSub = BleService.instance.wifiStatusStream.listen((_) {
+      if (_disposed) return;
+      notifyListeners();
     });
 
     _announceStartup();
@@ -951,6 +967,7 @@ class HomeViewModel extends ChangeNotifier {
     _buttonSub?.cancel();
     _captureSub?.cancel();
     _telemetrySub?.cancel();
+    _wifiStatusSub?.cancel();
     _processingTimeout?.cancel();
     if (_bleListener != null) {
       BleService.instance.removeListener(_bleListener!);

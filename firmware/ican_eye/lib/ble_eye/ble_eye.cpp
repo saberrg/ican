@@ -285,6 +285,16 @@ class CaptureCommandCallback : public BLECharacteristicCallbacks {
         Serial.printf("[BLE] NACK_FRAME command received: %u ranges=%s\n",
                       frameId, ranges.c_str());
       }
+    } else if (cmd.startsWith("WIFI:")) {
+      String payload = cmd.substring(5);
+      portENTER_CRITICAL(&s_cmdMux);
+      pendingCmdType = EYE_CMD_WIFI;
+      pendingCmdProfile = 0;
+      strncpy(pendingCmdNackRanges, payload.c_str(),
+              sizeof(pendingCmdNackRanges) - 1);
+      pendingCmdNackRanges[sizeof(pendingCmdNackRanges) - 1] = '\0';
+      portEXIT_CRITICAL(&s_cmdMux);
+      Serial.println("[BLE] WIFI command received");
     } else {
       Serial.printf("[BLE] Unknown command: %s\n", cmd.c_str());
       sendControlMessage("ERR:UNKNOWN_COMMAND");

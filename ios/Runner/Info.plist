@@ -53,6 +53,8 @@
 	<string>iCan uses Bluetooth to communicate with the iCan Cane and iCan Eye devices for navigation assistance and scene description.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>iCan uses Bluetooth to communicate with the iCan Cane and iCan Eye devices.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>iCan needs local network access to receive high-FPS camera frames from the iCan Eye over your phone hotspot.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>iCan uses the microphone for voice commands to control navigation and scene description.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

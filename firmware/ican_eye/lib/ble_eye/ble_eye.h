@@ -29,6 +29,7 @@ enum EyeCommand : uint8_t {
   EYE_CMD_ABORT = 6,
   EYE_CMD_ACK_FRAME = 7,
   EYE_CMD_NACK_FRAME = 8,
+  EYE_CMD_WIFI = 9,
 };
 
 /** Parsed command from BLE client. */
@@ -37,7 +38,7 @@ struct EyeCommandData {
   int profileIndex;   // valid when type == EYE_CMD_PROFILE
   int liveIntervalMs; // valid when type == EYE_CMD_LIVE_START
   uint16_t frameId;   // valid for ACK_FRAME/NACK_FRAME
-  char nackRanges[80];
+  char nackRanges[80]; // also reused as payload for EYE_CMD_WIFI: "ssid;pw"
 };
 
 // =========================================================================

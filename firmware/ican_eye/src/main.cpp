@@ -15,6 +15,8 @@
  */
 
 #include <Arduino.h>
+#include <Preferences.h>
+#include <WiFi.h>
 #include <string.h>
 
 // Local library headers (implemented in lib/ subdirectories)
@@ -24,6 +26,8 @@
 
 // Shared protocol (included via -I../../shared build flag)
 #include "ble_protocol.h"
+
+static Preferences prefs;
 
 // Hardware Button Configuration
 #define CAPTURE_BUTTON_PIN D1
@@ -53,6 +57,13 @@ int liveIntervalMs = 1500;
 // interval.  Must never double as a "next capture time" marker.
 unsigned long liveLastEndMs = 0;
 bool liveBusy = false;
+
+// WiFi provisioning / streaming state.
+static unsigned long wifiAttemptStartMs = 0;
+static bool wifiAttemptActive = false;
+static bool wifiAttemptAnnounced = false;
+static unsigned long wifiLiveLastEndMs = 0;
+static uint16_t wifiFrameCounter = 0;
 
 void sendStatusMessage() {
   char msg[280];
@@ -105,6 +116,18 @@ void setup() {
   digitalWrite(21, LOW); delay(100);
 
   initBleEye();
+
+  // WiFi: stay in station mode; credentials are loaded from NVS if present.
+  WiFi.mode(WIFI_STA);
+  prefs.begin("wifi", false);
+  String savedSsid = prefs.getString("ssid", "");
+  String savedPw = prefs.getString("pw", "");
+  prefs.end();
+  if (savedSsid.length() > 0) {
+    Serial.printf("[WiFi] Loaded saved SSID '%s'\n", savedSsid.c_str());
+    setWifiCredentials(savedSsid, savedPw);
+    tryConnectWifi();
+  }
 
   // LED OFF: Successfully reached loop()
   digitalWrite(21, HIGH);
@@ -289,9 +312,50 @@ void loop() {
     retransmitImageFrameRanges(cmd.frameId, cmd.nackRanges);
     break;
 
+  case EYE_CMD_WIFI: {
+    // Payload arrives as "<ssid>;<password>" in cmd.nackRanges.
+    String payload = String(cmd.nackRanges);
+    int sep = payload.indexOf(';');
+    if (sep <= 0) {
+      sendControlMessage("WIFI_FAIL:bad_format");
+      break;
+    }
+    String newSsid = payload.substring(0, sep);
+    String newPw = payload.substring(sep + 1);
+    prefs.begin("wifi", false);
+    prefs.putString("ssid", newSsid);
+    prefs.putString("pw", newPw);
+    prefs.end();
+    setWifiCredentials(newSsid, newPw);
+    sendControlMessage("WIFI_TRYING");
+    tryConnectWifi();
+    wifiAttemptStartMs = millis();
+    wifiAttemptActive = true;
+    wifiAttemptAnnounced = false;
+    break;
+  }
+
   case EYE_CMD_NONE:
   default:
     break;
+  }
+
+  // Announce WiFi state transitions exactly once per provisioning attempt.
+  if (wifiAttemptActive) {
+    if (isWifiConnected()) {
+      if (!wifiAttemptAnnounced) {
+        String ip = WiFi.localIP().toString();
+        Serial.printf("[WiFi] Connected: %s\n", ip.c_str());
+        sendControlMessage(("WIFI_OK:" + ip).c_str());
+        wifiAttemptAnnounced = true;
+        wifiAttemptActive = false;
+      }
+    } else if (millis() - wifiAttemptStartMs > 15000UL) {
+      Serial.println("[WiFi] Connect timeout.");
+      sendControlMessage("WIFI_FAIL:timeout");
+      wifiAttemptAnnounced = true;
+      wifiAttemptActive = false;
+    }
   }
 
   // Firmware-driven live capture: auto-capture at the requested interval.
@@ -303,7 +367,8 @@ void loop() {
   //      between captures, measured from the *end* of the previous transfer.
   //      This prevents back-to-back captures when streaming takes longer than
   //      the configured interval.
-  if (liveMode && !liveBusy && isBleEyeConnected()) {
+  // Exactly one live channel is active — either WiFi UDP or BLE, never both.
+  if (liveMode && !liveBusy && isBleEyeConnected() && !isWifiConnected()) {
     const unsigned long now = millis();
     const unsigned long idleGapMs =
         (unsigned long)(liveIntervalMs / 2) < 300UL
@@ -332,25 +397,22 @@ void loop() {
     }
   }
 
-  if (isWifiConnected()) {
-    camera_fb_t *fb = capturePhoto();
-    if (fb) {
-      sendFrame(fb->buf, fb->len);
-      esp_camera_fb_return(fb);
-    }
-  } else {
-    // LastEffortX: Offline extreme fallback over BLE
-    static unsigned long lastHazardTime = 0;
-    unsigned long nowTime = millis();
-    if (isBleEyeConnected() && nowTime - lastHazardTime > 4000) {
-      lastHazardTime = nowTime;
-      const char* hazards[] = {
-        "HAZARD: Person detected",
-        "HAZARD: Chair at 12 o'clock",
-        "HAZARD: Car approaching",
-        "HAZARD: Stairs ahead"
-      };
-      sendControlMessage(hazards[random(0, 4)]);
+  // WiFi UDP path: only during live mode, and only if connected.
+  // Exactly one live channel is active — either WiFi OR BLE, never both.
+  if (liveMode && isWifiConnected() && !liveBusy) {
+    const unsigned long now = millis();
+    const unsigned long idleGapMs =
+        (unsigned long)(liveIntervalMs / 2) < 300UL
+            ? 300UL
+            : (unsigned long)(liveIntervalMs / 2);
+    const unsigned long sinceEnd = now - wifiLiveLastEndMs;
+    if (sinceEnd >= (unsigned long)liveIntervalMs && sinceEnd >= idleGapMs) {
+      camera_fb_t *fb = capturePhoto();
+      if (fb) {
+        sendFrame(fb->buf, fb->len, wifiFrameCounter++);
+        esp_camera_fb_return(fb);
+      }
+      wifiLiveLastEndMs = millis();
     }
   }
 
