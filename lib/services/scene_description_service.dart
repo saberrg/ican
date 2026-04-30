@@ -264,43 +264,104 @@ class SceneDescriptionService extends ChangeNotifier {
     );
     final prompt = const ScenePromptBuilder().build(offlineContext);
 
+    // Build the rich perception template up front — this is the deterministic
+    // spine of the response (hazards + clock positions + objects). We will
+    // always speak it; the generative backend adds scene *meaning* on top when
+    // it's available, rather than competing with it.
+    final templateText = await _templateDescriptionFor(perception, imageBytes);
+
+    String? modelText;
+    VisionBackend? modelBackend;
+
     if (await _isFoundationModelsUsable()) {
-      final text = await _tryLocalGeneratedText(
+      modelText = await _collectLocalGenerativeText(
         label: 'Foundation Models',
-        backend: VisionBackend.foundationModels,
         collect: () => _collectFoundationModelsText(
           perception,
           systemPrompt: prompt.systemPrompt,
         ),
       );
-      if (text != null) {
-        return _offlineResult(text, VisionBackend.foundationModels);
-      }
+      if (modelText != null) modelBackend = VisionBackend.foundationModels;
     }
 
-    if (await _isSmolVlmReadyForDescribe(
-      imageBytes,
-      systemPrompt: prompt.systemPrompt,
-    )) {
-      final text = await _tryLocalGeneratedText(
+    if (modelText == null &&
+        await _isSmolVlmReadyForDescribe(
+          imageBytes,
+          systemPrompt: prompt.systemPrompt,
+        )) {
+      modelText = await _collectLocalGenerativeText(
         label: 'SmolVLM2',
-        backend: VisionBackend.vlm,
         collect: () => _collectVlmText(
           imageBytes,
           perception,
           systemPrompt: prompt.systemPrompt,
         ),
       );
-      if (text != null) {
-        return _offlineResult(text, VisionBackend.vlm);
-      }
+      if (modelText != null) modelBackend = VisionBackend.vlm;
     }
 
-    debugPrint(
-      '[SceneDescription] Offline generative backends unavailable; using template',
-    );
-    final templated = await _templateDescriptionFor(perception, imageBytes);
-    return _offlineResult(templated, VisionBackend.visionOnly);
+    final combined = _combineOfflineText(modelText, templateText);
+    final backend = modelBackend ?? VisionBackend.visionOnly;
+    return _offlineResult(combined, backend);
+  }
+
+  /// Collects a local model's output without any "substantiality" gating. The
+  /// caller always combines the result with the perception template, so even
+  /// a single clean sentence from the model adds real value rather than being
+  /// discarded.
+  Future<String?> _collectLocalGenerativeText({
+    required String label,
+    required Future<String> Function() collect,
+  }) async {
+    try {
+      final text = await collect();
+      final cleaned = _cleanLocalDescriptionText(text);
+      if (cleaned.isEmpty) {
+        debugPrint('[SceneDescription] $label produced no usable output');
+        return null;
+      }
+      _lastCompletionMetadata = SceneCompletionMetadata.complete;
+      return cleaned;
+    } catch (e) {
+      debugPrint('[SceneDescription] $label failed; falling back: $e');
+      return null;
+    }
+  }
+
+  /// Merges the generative output with the perception template so the user
+  /// always hears the hard facts (hazards, clock positions, objects) even if
+  /// the model only managed a single sentence. Generative text leads because
+  /// it describes scene *meaning*; template trails with concrete spatial facts.
+  static String _combineOfflineText(String? modelText, String templateText) {
+    final model = (modelText ?? '').trim();
+    final template = templateText.trim();
+    if (model.isEmpty) return template;
+    if (template.isEmpty || template == 'Scene unclear, try again.') {
+      return model;
+    }
+    final modelLower = model.toLowerCase();
+    // If the model's output already covers hazards + clock orientation, don't
+    // stack the template on top — stays under the spoken-length budget.
+    final modelHasClock =
+        modelLower.contains("o'clock") ||
+        modelLower.contains('o clock') ||
+        modelLower.contains('oclock');
+    final templateRedundant =
+        template.startsWith('Caution:') &&
+        modelLower.contains('caution') &&
+        modelHasClock;
+    if (templateRedundant) return model;
+    // Also skip if the model is already substantial (3+ sentences) AND uses
+    // clock positions — the template would just repeat what was said.
+    final modelSentences = RegExp(
+      r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''',
+    ).allMatches(model).length;
+    if (modelSentences >= 3 && modelHasClock) return model;
+    final separator =
+        model.endsWith('.') || model.endsWith('!') || model.endsWith('?')
+        ? ' '
+        : '. ';
+    return '$model$separator$template';
   }
 
   Future<SceneDescriptionResult> _describeAutoForCompatibility(
@@ -384,31 +445,6 @@ class SceneDescriptionService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[SceneDescription] SmolVLM2 readiness check failed: $e');
       return false;
-    }
-  }
-
-  Future<String?> _tryLocalGeneratedText({
-    required String label,
-    required VisionBackend backend,
-    required Future<String> Function() collect,
-  }) async {
-    try {
-      final text = await collect();
-      final cleaned = _cleanLocalDescriptionText(text);
-      if (cleaned.isEmpty) {
-        debugPrint('[SceneDescription] $label produced no usable output');
-        return null;
-      }
-      if (!_isSubstantialOfflineDescription(cleaned)) {
-        debugPrint('[SceneDescription] $label output was too thin for TTS');
-        return null;
-      }
-      _lastBackend = backend;
-      _lastCompletionMetadata = SceneCompletionMetadata.complete;
-      return cleaned;
-    } catch (e) {
-      debugPrint('[SceneDescription] $label failed; falling back: $e');
-      return null;
     }
   }
 
@@ -546,18 +582,6 @@ class SceneDescriptionService extends ChangeNotifier {
         .trim();
     if (normalized.isEmpty) return '';
     return _ensureSentencePunctuation(normalized);
-  }
-
-  static bool _isSubstantialOfflineDescription(String text) {
-    final normalized = _cleanLocalDescriptionText(text);
-    if (normalized == 'Scene unclear, try again.') return true;
-    final words = RegExp(r"[A-Za-z0-9']+").allMatches(normalized).length;
-    final sentences = RegExp(
-      r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''',
-    ).allMatches(normalized).length;
-    // Accept 2 solid sentences with enough content — the prior 3-sentence gate
-    // was rejecting SmolVLM2 output that typically lands at 2-3 sentences.
-    return sentences >= 2 && words >= 16;
   }
 
   // Single-backend entry points for diagnostics.

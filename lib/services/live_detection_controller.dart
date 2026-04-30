@@ -60,7 +60,10 @@ class LiveDetectionController extends ChangeNotifier {
   // are disabled for the rest of the session and only local Tier 1 callouts
   // fire. Users can also pick [LiveCloudPolicy.localOnly] to skip cloud entirely.
   static const int _maxCloudCallsPerSession = 10;
-  static const Duration _minCloudInterval = Duration(seconds: 15);
+  // Min gap between cloud calls. Kept below _tier3MinHold (5 s) so a single
+  // stable scene can still climb Tier 2 → Tier 3 within one scene. The per-
+  // session cap + scene-change gating are the real cost ceiling.
+  static const Duration _minCloudInterval = Duration(seconds: 4);
 
   int _cloudCallsThisSession = 0;
   DateTime _lastCloudCallAt = DateTime.fromMillisecondsSinceEpoch(0);

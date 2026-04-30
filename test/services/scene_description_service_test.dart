@@ -83,7 +83,8 @@ void main() {
       onDevice.foundationModelsAvailable = false;
       onDevice.smolReadinessPassed = true;
       // 2 sentences, 19 words — would have been rejected by the prior
-      // 3-sentence/24-word gate but is now accepted.
+      // 3-sentence/24-word gate but is now accepted and combined with the
+      // perception template below.
       onDevice.vlmOutput =
           'A quiet hallway continues ahead with a person standing at '
           '12 o\'clock. A wooden chair sits at 2 o\'clock within reach.';
@@ -92,7 +93,8 @@ void main() {
 
       expect(result.backend, VisionBackend.vlm);
       expect(result.text, contains('quiet hallway'));
-      expect(_sentenceCount(result.text), 2);
+      // Offline output is now combined: model text + perception template spine.
+      expect(_sentenceCount(result.text), greaterThanOrEqualTo(2));
     });
 
     test('skips SmolVLM when model files exist but probe failed', () async {
@@ -112,20 +114,27 @@ void main() {
       expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
-    test('thin local generated output falls back to richer template', () async {
-      onDevice.foundationModelsAvailable = true;
-      onDevice.foundationModelsOutput = 'A hallway is ahead.';
-      onDevice.smolReadinessPassed = false;
+    test(
+      'thin local generated output is combined with rich template',
+      () async {
+        onDevice.foundationModelsAvailable = true;
+        onDevice.foundationModelsOutput = 'A hallway is ahead.';
+        onDevice.smolReadinessPassed = false;
 
-      final result = await service.describeOffline(_jpegBytes);
+        final result = await service.describeOffline(_jpegBytes);
 
-      expect(result.backend, VisionBackend.visionOnly);
-      expect(
-        result.text,
-        contains('Caution: chair at 12 o\'clock, very close'),
-      );
-      expect(_sentenceCount(result.text), greaterThanOrEqualTo(3));
-    });
+        // Output is now the thin model sentence PLUS the rich perception spine,
+        // so the user hears hazards + clock positions even when the model is
+        // terse. Backend reflects that the model produced usable text.
+        expect(result.backend, VisionBackend.foundationModels);
+        expect(result.text, startsWith('A hallway is ahead.'));
+        expect(
+          result.text,
+          contains('Caution: chair at 12 o\'clock, very close'),
+        );
+        expect(_sentenceCount(result.text), greaterThanOrEqualTo(3));
+      },
+    );
 
     test(
       'falls back to SmolVLM when Foundation Models produce no output',
