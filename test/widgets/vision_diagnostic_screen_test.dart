@@ -63,19 +63,12 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Apple Vision: ready'), findsOneWidget);
-    // The diagnostic surface now shows the Foundation Models status in two
-    // places: the always-visible card at the top and the detailed report.
     expect(
-      find.textContaining('Foundation Models: unavailable'),
-      findsAtLeastNWidgets(1),
-    );
-    expect(find.textContaining('SmolVLM2 status: downloaded'), findsOneWidget);
-    expect(
-      find.textContaining('SmolVLM2 load: loaded successfully'),
+      find.textContaining('Gemma 4 E2B status: downloaded'),
       findsOneWidget,
     );
     expect(
-      find.textContaining('Vision template fallback: ready'),
+      find.textContaining('Gemma 4 E2B load: loaded successfully'),
       findsOneWidget,
     );
     expect(find.textContaining('YOLOv3 Tiny: ready'), findsOneWidget);
@@ -86,8 +79,8 @@ void main() {
 
     expect(clipboardText, contains('iCan Eye diagnostics'));
     expect(clipboardText, contains('Image quality: dim,low_contrast'));
-    expect(clipboardText, contains('SmolVLM2 load: loaded successfully'));
-    expect(clipboardText, contains('SmolVLM2 readiness snapshot'));
+    expect(clipboardText, contains('Gemma 4 E2B load: loaded successfully'));
+    expect(clipboardText, contains('Gemma 4 E2B readiness snapshot'));
     expect(clipboardText, contains('"passed": false'));
     expect(clipboardText, contains('YOLOv3 Tiny: ready'));
   });
@@ -125,7 +118,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   }
 
   @override
-  Future<bool> loadVlmModel() async => true;
+  Future<bool> loadGemmaModel() async => true;
 
   @override
   Future<OfflineVisionDiagnostics> getOfflineVisionDiagnostics() async {
@@ -148,7 +141,7 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   }
 
   @override
-  Future<String> getSmolVlmReadinessSupportSnapshot() async {
+  Future<String> getGemmaReadinessSupportSnapshot() async {
     return const JsonEncoder.withIndent('  ').convert({
       'readiness': {
         'runtimeLinked': true,

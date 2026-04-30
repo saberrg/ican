@@ -1,24 +1,24 @@
 import Flutter
 import Foundation
 
-/// Bridges Dart ↔ Swift for on-device vision and VLM inference.
+/// Bridges Dart ↔ Swift for on-device vision and Gemma inference.
 /// Registers a MethodChannel for request/response calls and EventChannels
-/// for streaming VLM tokens, Foundation Models tokens, and download progress.
+/// for streaming Gemma tokens, Foundation Models tokens, and download progress.
 final class OnDeviceVisionChannel: NSObject {
 
     static let methodChannelName            = "com.ican/on_device_vision"
-    static let vlmStreamChannelName         = "com.ican/vlm_stream"
+    static let gemmaStreamChannelName         = "com.ican/gemma_stream"
     static let fmStreamChannelName          = "com.ican/fm_stream"
     static let downloadProgressChannelName  = "com.ican/model_download_progress"
 
     private static var methodChannel:           FlutterMethodChannel?
-    private static var vlmStreamChannel:        FlutterEventChannel?
+    private static var gemmaStreamChannel:        FlutterEventChannel?
     private static var fmStreamChannel:         FlutterEventChannel?
     private static var downloadProgressChannel: FlutterEventChannel?
     private static var registeredMessenger: AnyObject?
 
     // Event sinks for streaming data back to Dart
-    private static var vlmEventSink:      FlutterEventSink?
+    private static var gemmaEventSink:      FlutterEventSink?
     private static var fmEventSink:       FlutterEventSink?
     private static var downloadEventSink: FlutterEventSink?
 
@@ -32,9 +32,9 @@ final class OnDeviceVisionChannel: NSObject {
         method.setMethodCallHandler(handleMethodCall)
         methodChannel = method
 
-        let vlmStream = FlutterEventChannel(name: vlmStreamChannelName, binaryMessenger: messenger)
-        vlmStream.setStreamHandler(VlmStreamHandler())
-        vlmStreamChannel = vlmStream
+        let gemmaStream = FlutterEventChannel(name: gemmaStreamChannelName, binaryMessenger: messenger)
+        gemmaStream.setStreamHandler(gemmaStreamHandler())
+        gemmaStreamChannel = gemmaStream
 
         let fmStream = FlutterEventChannel(name: fmStreamChannelName, binaryMessenger: messenger)
         fmStream.setStreamHandler(FmStreamHandler())
@@ -133,25 +133,25 @@ final class OnDeviceVisionChannel: NSObject {
                 DispatchQueue.main.async { result(true) }
             }
 
-        // ── Layer 2: SmolVLM2 model lifecycle ────────────────────────────────
-        case "getModelStatus":
-            if ModelDownloadManager.shared.isDownloading {
+        // ── Layer 2: Gemma 4 E2B model lifecycle ────────────────────────────────
+        case "getGemmaStatus":
+            if GemmaModelDownloadManager.shared.isDownloading {
                 result("downloading")
             } else {
-                result(LlamaService.shared.getModelStatus())
+                result(GemmaLiteRtService.shared.getModelStatus())
             }
 
-        case "loadModel":
+        case "loadGemmaModel":
             Task {
-                let success = await LlamaService.shared.loadModel()
+                let success = await GemmaLiteRtService.shared.loadModel()
                 DispatchQueue.main.async { result(success) }
             }
 
-        case "unloadModel":
-            LlamaService.shared.unloadModel()
+        case "unloadGemmaModel":
+            GemmaLiteRtService.shared.unloadModel()
             result(true)
 
-        case "describeImage":
+        case "describeImageWithGemma":
             guard let imageBytes = imageBytes(from: call, result: result) else { return }
             let args         = call.arguments as? [String: Any] ?? [:]
             let systemPrompt = args["systemPrompt"] as? String ?? ""
@@ -159,46 +159,46 @@ final class OnDeviceVisionChannel: NSObject {
 
             Task {
                 // Ensure the model is resident in GPU memory before inference.
-                // loadModel() is idempotent, so this is a no-op after the first
+                // loadGemmaModel() is idempotent, so this is a no-op after the first
                 // successful load in this app session. Without this, describes
                 // that happened before any readiness probe silently no-op'd
-                // with "SmolVLM2 not loaded — call loadModel() first".
-                let loaded = await LlamaService.shared.loadModel()
+                // with "Gemma 4 E2B not loaded — call loadGemmaModel() first".
+                let loaded = await GemmaLiteRtService.shared.loadModel()
                 guard loaded else {
                     DispatchQueue.main.async {
-                        vlmEventSink?(FlutterError(code: "VLM_NOT_LOADED",
-                                                   message: "SmolVLM2 could not be loaded",
+                        gemmaEventSink?(FlutterError(code: "GEMMA_NOT_LOADED",
+                                                   message: "Gemma 4 E2B could not be loaded",
                                                    details: nil))
-                        vlmEventSink?(FlutterEndOfEventStream)
+                        gemmaEventSink?(FlutterEndOfEventStream)
                         result(false)
                     }
                     return
                 }
-                await LlamaService.shared.describeImage(
+                await GemmaLiteRtService.shared.describeImage(
                     jpegData:      imageBytes,
                     systemPrompt:  systemPrompt,
                     visionContext: visionCtx,
                     onToken: { token in
-                        DispatchQueue.main.async { vlmEventSink?(token) }
+                        DispatchQueue.main.async { gemmaEventSink?(token) }
                     },
                     onComplete: {
-                        DispatchQueue.main.async { vlmEventSink?(FlutterEndOfEventStream) }
+                        DispatchQueue.main.async { gemmaEventSink?(FlutterEndOfEventStream) }
                     },
                     onError: { error in
                         DispatchQueue.main.async {
-                            vlmEventSink?(FlutterError(code: "VLM_ERROR",
+                            gemmaEventSink?(FlutterError(code: "GEMMA_ERROR",
                                                        message: error,
                                                        details: nil))
-                            vlmEventSink?(FlutterEndOfEventStream)
+                            gemmaEventSink?(FlutterEndOfEventStream)
                         }
                     }
                 )
                 DispatchQueue.main.async { result(true) }
             }
 
-        // ── SmolVLM2 download management ──────────────────────────────────────
-        case "downloadModel":
-            ModelDownloadManager.shared.startDownload { payload in
+        // ── Gemma 4 E2B download management ──────────────────────────────────────
+        case "downloadGemmaModel":
+            GemmaModelDownloadManager.shared.startDownload { payload in
                 DispatchQueue.main.async { downloadEventSink?(payload) }
             } onComplete: { success, error in
                 DispatchQueue.main.async {
@@ -214,37 +214,37 @@ final class OnDeviceVisionChannel: NSObject {
             }
             result(true)
 
-        case "cancelDownload":
-            ModelDownloadManager.shared.cancelDownload()
+        case "cancelGemmaDownload":
+            GemmaModelDownloadManager.shared.cancelDownload()
             result(true)
 
-        case "deleteModel":
-            result(ModelDownloadManager.shared.deleteModel())
+        case "deleteGemmaModel":
+            result(GemmaModelDownloadManager.shared.deleteModel())
 
-        case "getModelInfo":
-            result(ModelDownloadManager.shared.getModelInfo())
+        case "getGemmaModelInfo":
+            result(GemmaModelDownloadManager.shared.getModelInfo())
 
-        case "getSmolVlmReadinessContext":
-            result(LlamaService.shared.readinessContext())
+        case "getGemmaReadinessContext":
+            result(GemmaLiteRtService.shared.readinessContext())
 
-        case "runSmolVlmReadinessProbe":
+        case "runGemmaReadinessProbe":
             guard let imageBytes = imageBytes(from: call, result: result) else { return }
             let args = call.arguments as? [String: Any] ?? [:]
             let systemPrompt = args["systemPrompt"] as? String ?? ""
             Task {
-                let diagnostic = await LlamaService.shared.runReadinessProbe(
+                let diagnostic = await GemmaLiteRtService.shared.runReadinessProbe(
                     jpegData: imageBytes,
                     systemPrompt: systemPrompt
                 )
                 DispatchQueue.main.async { result(diagnostic) }
             }
 
-        case "runSmolVlmSelfTest":
+        case "runGemmaSelfTest":
             guard let imageBytes = imageBytes(from: call, result: result) else { return }
             let args = call.arguments as? [String: Any] ?? [:]
             let systemPrompt = args["systemPrompt"] as? String ?? ""
             Task {
-                let diagnostic = await LlamaService.shared.runSelfTest(
+                let diagnostic = await GemmaLiteRtService.shared.runSelfTest(
                     jpegData: imageBytes,
                     systemPrompt: systemPrompt
                 )
@@ -273,13 +273,13 @@ final class OnDeviceVisionChannel: NSObject {
 
     // MARK: - Event Stream Handlers
 
-    private class VlmStreamHandler: NSObject, FlutterStreamHandler {
+    private class gemmaStreamHandler: NSObject, FlutterStreamHandler {
         func onListen(withArguments _: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-            OnDeviceVisionChannel.vlmEventSink = events
+            OnDeviceVisionChannel.gemmaEventSink = events
             return nil
         }
         func onCancel(withArguments _: Any?) -> FlutterError? {
-            OnDeviceVisionChannel.vlmEventSink = nil
+            OnDeviceVisionChannel.gemmaEventSink = nil
             return nil
         }
     }

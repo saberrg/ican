@@ -21,7 +21,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('com.ican/on_device_vision');
-  const vlmChannel = EventChannel('com.ican/vlm_stream');
+  const vlmChannel = EventChannel('com.ican/gemma_stream');
   const fmChannel = EventChannel('com.ican/fm_stream');
   const downloadChannel = EventChannel('com.ican/model_download_progress');
 
@@ -47,7 +47,7 @@ void main() {
           .setMockMethodCallHandler(channel, (call) async {
             return switch (call.method) {
               'isFoundationModelsAvailable' => false,
-              'getModelStatus' => 'not_available',
+              'getGemmaStatus' => 'not_available',
               'isObjectDetectionAvailable' => false,
               'isDepthEstimationAvailable' => false,
               'getNativeModelDiagnostics' => _diagnostics,
@@ -61,15 +61,10 @@ void main() {
       expect(status.modelStatus, ModelStatus.notAvailable);
       expect(status.objectDetectionAvailable, isFalse);
       expect(status.depthEstimationAvailable, isFalse);
-      expect(status.bestLocalBackendLabel, 'Apple Vision basic');
+      expect(status.bestLocalBackendLabel, 'Gemma local unavailable');
       expect(
         status.missingRequirements,
-        containsAll([
-          'Foundation Models unavailable',
-          'SmolVLM2 unavailable',
-          'YOLOv3Tiny model missing',
-          'Depth Anything model missing',
-        ]),
+        containsAll(['Gemma runtime unavailable']),
       );
     },
   );
@@ -113,7 +108,7 @@ void main() {
       ),
     );
     await expectLater(
-      service.describeWithVlm(truncated, systemPrompt: 'p').first,
+      service.describeWithGemma(truncated, systemPrompt: 'p').first,
       throwsA(
         isA<LocalVisionException>().having((e) => e.code, 'code', 'Local L00'),
       ),
@@ -200,7 +195,7 @@ void main() {
           .setMockMethodCallHandler(channel, (call) async {
             return switch (call.method) {
               'isFoundationModelsAvailable' => false,
-              'getModelStatus' => 'not_downloaded',
+              'getGemmaStatus' => 'not_downloaded',
               'isObjectDetectionAvailable' => true,
               'isDepthEstimationAvailable' => true,
               'getNativeModelDiagnostics' => _diagnostics,
@@ -214,17 +209,17 @@ void main() {
       expect(status.hasSpatialPerception, isTrue);
       expect(
         status.missingRequirements,
-        contains('SmolVLM2 model not downloaded'),
+        contains('Gemma 4 E2B model not downloaded'),
       );
     },
   );
 
-  test('reports loaded SmolVLM as the best local backend', () async {
+  test('reports loaded Gemma as the best local backend', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           return switch (call.method) {
             'isFoundationModelsAvailable' => true,
-            'getModelStatus' => 'loaded',
+            'getGemmaStatus' => 'loaded',
             'isObjectDetectionAvailable' => true,
             'isDepthEstimationAvailable' => true,
             'getNativeModelDiagnostics' => _diagnostics,
@@ -234,7 +229,7 @@ void main() {
 
     final status = await OnDeviceVisionService().getOfflineVisionStatus();
 
-    expect(status.bestLocalBackendLabel, 'SmolVLM2');
+    expect(status.bestLocalBackendLabel, 'Gemma 4 E2B');
     expect(status.modelStatus, ModelStatus.loaded);
     expect(status.missingRequirements, isEmpty);
   });
@@ -280,28 +275,28 @@ void main() {
     expect(diagnostics.objectDetector.message, contains('not found'));
   });
 
-  test('parses validated SmolVLM2 model info from native channel', () async {
+  test('parses validated Gemma 4 E2B model info from native channel', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           return switch (call.method) {
-            'getModelInfo' => _modelInfo,
+            'getGemmaModelInfo' => _modelInfo,
             _ => throw PlatformException(code: 'unexpected'),
           };
         });
 
-    final info = await OnDeviceVisionService().getSmolVlmModelInfo();
+    final info = await OnDeviceVisionService().getGemmaModelInfo();
 
     expect(info.downloaded, isTrue);
     expect(info.valid, isTrue);
-    expect(info.modelName, 'SmolVLM2-500M-Video-Instruct Q8_0');
-    expect(info.requiredBytes, 545592752);
-    expect(info.files.first.name, 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf');
-    expect(info.files.first.expectedSizeBytes, 436807568);
+    expect(info.modelName, 'Gemma 4 E2B IT LiteRT-LM');
+    expect(info.requiredBytes, 2583085056);
+    expect(info.files.first.name, 'gemma-4-E2B-it.litertlm');
+    expect(info.files.first.expectedSizeBytes, 2583085056);
     expect(
       info.files.first.sha256,
-      '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
+      'ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42',
     );
-    expect(info.files, hasLength(2));
+    expect(info.files, hasLength(1));
     expect(info.files.first.downloaded, isTrue);
   });
 
@@ -322,17 +317,17 @@ void main() {
                     'phase': 'downloading',
                     'progress': 0.5,
                     'filesDownloaded': 0,
-                    'totalFiles': 2,
-                    'requiredBytes': 545592752,
-                    'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+                    'totalFiles': 1,
+                    'requiredBytes': 2583085056,
+                    'fileName': 'gemma-4-E2B-it.litertlm',
                   });
                   events.success({
                     'status': 'complete',
                     'phase': 'validated',
                     'progress': 1.0,
-                    'filesDownloaded': 2,
-                    'totalFiles': 2,
-                    'requiredBytes': 545592752,
+                    'filesDownloaded': 1,
+                    'totalFiles': 1,
+                    'requiredBytes': 2583085056,
                   });
                   events.endOfStream();
                 });
@@ -342,7 +337,7 @@ void main() {
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
-            if (call.method == 'downloadModel') {
+            if (call.method == 'downloadGemmaModel') {
               order.add('invoke');
               return true;
             }
@@ -379,7 +374,7 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-          if (call.method == 'describeImage') {
+          if (call.method == 'describeImageWithGemma') {
             order.add('invoke');
             return true;
           }
@@ -387,52 +382,12 @@ void main() {
         });
 
     final chunks = await OnDeviceVisionService()
-        .describeWithVlm(_fakeJpeg(), systemPrompt: 'Describe.')
+        .describeWithGemma(_fakeJpeg(), systemPrompt: 'Describe.')
         .toList();
 
     expect(order.take(2), ['listen', 'invoke']);
     expect(chunks.join(), 'direct description');
   });
-
-  test(
-    'Foundation Models stream subscribes before invoking native synthesis',
-    () async {
-      final order = <String>[];
-
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockStreamHandler(
-            fmChannel,
-            MockStreamHandler.inline(
-              onListen: (_, events) {
-                order.add('listen');
-                Future<void>.microtask(() {
-                  events.success('foundation description');
-                  events.endOfStream();
-                });
-              },
-            ),
-          );
-
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            if (call.method == 'synthesizeDescription') {
-              order.add('invoke');
-              return true;
-            }
-            throw PlatformException(code: 'unexpected');
-          });
-
-      final chunks = await OnDeviceVisionService()
-          .synthesizeWithFoundationModels(
-            'Layer 1 context',
-            systemPrompt: 'Describe.',
-          )
-          .toList();
-
-      expect(order.take(2), ['listen', 'invoke']);
-      expect(chunks.single, 'foundation description');
-    },
-  );
 
   test('empty VLM stream reports a Local diagnostic', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -447,13 +402,13 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-          if (call.method == 'describeImage') return true;
+          if (call.method == 'describeImageWithGemma') return true;
           throw PlatformException(code: 'unexpected');
         });
 
     await expectLater(
       OnDeviceVisionService()
-          .describeWithVlm(_fakeJpeg(), systemPrompt: 'Describe.')
+          .describeWithGemma(_fakeJpeg(), systemPrompt: 'Describe.')
           .drain<void>(),
       throwsA(
         isA<LocalVisionException>()
@@ -466,14 +421,11 @@ void main() {
   test('native stream errors become Local diagnostics', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockStreamHandler(
-          fmChannel,
+          vlmChannel,
           MockStreamHandler.inline(
             onListen: (_, events) {
               Future<void>.microtask(() {
-                events.error(
-                  code: 'FM_ERROR',
-                  message: 'Foundation Models unavailable',
-                );
+                events.error(code: 'GEMMA_ERROR', message: 'Gemma unavailable');
                 events.endOfStream();
               });
             },
@@ -482,47 +434,45 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-          if (call.method == 'synthesizeDescription') return true;
+          if (call.method == 'describeImageWithGemma') return true;
           throw PlatformException(code: 'unexpected');
         });
 
     await expectLater(
       OnDeviceVisionService()
-          .synthesizeWithFoundationModels('context', systemPrompt: 'Describe.')
+          .describeWithGemma(_fakeJpeg(), systemPrompt: 'Describe.')
           .drain<void>(),
       throwsA(
         isA<LocalVisionException>()
-            .having((e) => e.code, 'code', 'Local L30')
-            .having((e) => e.detail, 'detail', contains('FM_ERROR')),
+            .having((e) => e.code, 'code', 'Local L20')
+            .having((e) => e.detail, 'detail', contains('GEMMA_ERROR')),
       ),
     );
   });
 
-  test('returns copyable SmolVLM2 self-test diagnostics', () async {
+  test('returns copyable Gemma 4 E2B self-test diagnostics', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           return switch (call.method) {
-            'runSmolVlmSelfTest' => {
-              'llamaLinked': true,
+            'runGemmaSelfTest' => {
+              'runtimeLinked': true,
               'loadSuccess': true,
               'tokenCount': 4,
-              'textModel': {
-                'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
-              },
+              'textModel': {'fileName': 'gemma-4-E2B-it.litertlm'},
             },
             _ => throw PlatformException(code: 'unexpected'),
           };
         });
 
-    final result = await OnDeviceVisionService().runSmolVlmSelfTest(
+    final result = await OnDeviceVisionService().runGemmaSelfTest(
       Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
     );
 
-    expect(result['llamaLinked'], isTrue);
+    expect(result['runtimeLinked'], isTrue);
     expect(result['tokenCount'], 4);
     expect(
       result['textModel'],
-      containsPair('fileName', 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf'),
+      containsPair('fileName', 'gemma-4-E2B-it.litertlm'),
     );
   });
 
@@ -532,13 +482,13 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             return switch (call.method) {
-              'getSmolVlmReadinessContext' => _readinessContext,
-              'runSmolVlmReadinessProbe' => _passingReadinessReport,
+              'getGemmaReadinessContext' => _readinessContext,
+              'runGemmaReadinessProbe' => _passingReadinessReport,
               _ => throw PlatformException(code: 'unexpected'),
             };
           });
 
-      final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+      final report = await OnDeviceVisionService().runGemmaReadinessProbe(
         _fakeJpeg(),
       );
 
@@ -550,7 +500,7 @@ void main() {
   );
 
   test('readiness probe fails closed on low memory', () {
-    final report = SmolVlmReadinessReport.fromMap({
+    final report = GemmaReadinessReport.fromMap({
       ..._passingReadinessReport,
       'memoryBeforeBytes': 500000000,
     });
@@ -560,7 +510,7 @@ void main() {
   });
 
   test('readiness probe fails closed on latency timeout', () {
-    final report = SmolVlmReadinessReport.fromMap({
+    final report = GemmaReadinessReport.fromMap({
       ..._passingReadinessReport,
       'totalLatencyMs': 46000,
     });
@@ -570,12 +520,12 @@ void main() {
   });
 
   test('readiness probe fails closed on empty or repeated output', () {
-    final empty = SmolVlmReadinessReport.fromMap({
+    final empty = GemmaReadinessReport.fromMap({
       ..._passingReadinessReport,
       'tokenCount': 0,
       'sanitizedOutput': '',
     });
-    final repeated = SmolVlmReadinessReport.fromMap({
+    final repeated = GemmaReadinessReport.fromMap({
       ..._passingReadinessReport,
       'sanitizedOutput':
           'clear path ahead now clear path ahead now clear path ahead now.',
@@ -590,13 +540,13 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           calls++;
-          if (call.method == 'getSmolVlmReadinessContext') {
+          if (call.method == 'getGemmaReadinessContext') {
             return _readinessContext;
           }
           throw PlatformException(code: 'SHOULD_NOT_REACH');
         });
 
-    final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+    final report = await OnDeviceVisionService().runGemmaReadinessProbe(
       Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]),
     );
 
@@ -606,7 +556,7 @@ void main() {
   });
 
   test('readiness probe fails closed when native runtime is missing', () async {
-    final report = await OnDeviceVisionService().runSmolVlmReadinessProbe(
+    final report = await OnDeviceVisionService().runGemmaReadinessProbe(
       _fakeJpeg(),
     );
 
@@ -621,11 +571,11 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             return switch (call.method) {
-              'getSmolVlmReadinessContext' => {
+              'getGemmaReadinessContext' => {
                 ..._readinessContext,
                 'modelsDirectory': '/Users/me/Documents/models',
               },
-              'runSmolVlmReadinessProbe' => {
+              'runGemmaReadinessProbe' => {
                 ..._passingReadinessReport,
                 'modelsDirectory': '/Users/me/Documents/models',
                 'textModel': {'path': '/Users/me/Documents/models/text.gguf'},
@@ -635,8 +585,8 @@ void main() {
           });
 
       final service = OnDeviceVisionService();
-      await service.runSmolVlmReadinessProbe(_fakeJpeg());
-      final snapshot = await service.getSmolVlmReadinessSupportSnapshot();
+      await service.runGemmaReadinessProbe(_fakeJpeg());
+      final snapshot = await service.getGemmaReadinessSupportSnapshot();
 
       expect(snapshot, contains('"runtimeLinked": true'));
       expect(snapshot, contains('"passed": true'));
@@ -647,39 +597,37 @@ void main() {
 
   group('hasUsefulSpokenOutput', () {
     // Relaxed from the earlier 8-word / terminal-punctuation requirements so
-    // short SmolVLM2 probe outputs don't permanently disable the model.
+    // short Gemma 4 E2B probe outputs don't permanently disable the model.
     test('accepts 4-word outputs with punctuation', () {
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput('A dim room ahead.'),
+        GemmaReadinessReport.hasUsefulSpokenOutput('A dim room ahead.'),
         isTrue,
       );
     });
 
     test('accepts 4-word outputs without terminal punctuation', () {
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput(
-          'a hallway with two chairs',
-        ),
+        GemmaReadinessReport.hasUsefulSpokenOutput('a hallway with two chairs'),
         isTrue,
       );
     });
 
     test('rejects outputs under the 4-word floor', () {
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput('A dim room.'),
+        GemmaReadinessReport.hasUsefulSpokenOutput('A dim room.'),
         isFalse,
       );
     });
 
     test('still rejects banned meta tokens', () {
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput(
-          'smolvlm says hello world here',
+        GemmaReadinessReport.hasUsefulSpokenOutput(
+          'Gemma says hello world here',
         ),
         isFalse,
       );
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+        GemmaReadinessReport.hasUsefulSpokenOutput(
           'as an ai i cannot really see this',
         ),
         isFalse,
@@ -688,7 +636,7 @@ void main() {
 
     test('still rejects 4-word repetition loops', () {
       expect(
-        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+        GemmaReadinessReport.hasUsefulSpokenOutput(
           'the door is open the door is open',
         ),
         isFalse,
@@ -723,26 +671,18 @@ const _modelInfo = {
   'downloaded': true,
   'valid': true,
   'downloading': false,
-  'sizeBytes': 545592752,
-  'requiredBytes': 545592752,
+  'sizeBytes': 2583085056,
+  'requiredBytes': 2583085056,
   'path': '/Documents/models',
-  'modelName': 'SmolVLM2-500M-Video-Instruct Q8_0',
+  'modelName': 'Gemma 4 E2B IT LiteRT-LM',
   'files': [
     {
-      'name': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
+      'name': 'gemma-4-E2B-it.litertlm',
       'downloaded': true,
-      'sizeBytes': 436807568,
-      'expectedSizeBytes': 436807568,
+      'sizeBytes': 2583085056,
+      'expectedSizeBytes': 2583085056,
       'sha256':
-          '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
-    },
-    {
-      'name': 'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
-      'downloaded': true,
-      'sizeBytes': 108785184,
-      'expectedSizeBytes': 108785184,
-      'sha256':
-          '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
+          'ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42',
     },
   ],
 };
@@ -755,16 +695,10 @@ const _readinessContext = {
   'deviceModel': 'iPhone14,3',
   'files': [
     {
-      'fileName': 'SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
-      'expectedSizeBytes': 436807568,
+      'fileName': 'gemma-4-E2B-it.litertlm',
+      'expectedSizeBytes': 2583085056,
       'sha256':
-          '6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc',
-    },
-    {
-      'fileName': 'mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf',
-      'expectedSizeBytes': 108785184,
-      'sha256':
-          '921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b',
+          'ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42',
     },
   ],
 };

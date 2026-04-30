@@ -543,7 +543,7 @@ class _FakeSceneDescriptionService extends SceneDescriptionService {
     if (failure != null) throw failure;
     return SceneDescriptionResult(
       text: _nextResponse(),
-      backend: VisionBackend.visionOnly,
+      backend: VisionBackend.gemma,
       completionMetadata: SceneCompletionMetadata.complete,
     );
   }

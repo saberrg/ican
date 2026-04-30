@@ -1,6 +1,0 @@
-module llama {
-    header "llama.h"
-    header "mtmd.h"
-    header "mtmd-helper.h"
-    export *
-}

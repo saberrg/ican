@@ -761,7 +761,7 @@ class _DiagnosticPanel extends StatelessWidget {
 }
 
 /// Appears on Home when the user is in Local vision mode but no local
-/// generative backend (SmolVLM2 or Foundation Models) is available. Tapping
+/// generative backend (Gemma 4 E2B) is available. Tapping
 /// the banner opens Vision Diagnostic where the model can be downloaded or
 /// Apple Intelligence can be enabled. Dismissible per-session — reappears on
 /// next app launch so the user isn't nagged while still pair-debugging.
@@ -777,7 +777,6 @@ class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
   final _vision = OnDeviceVisionService();
   bool _dismissed = false;
   ModelStatus? _status;
-  bool? _fmAvailable;
   Timer? _poll;
 
   @override
@@ -798,17 +797,14 @@ class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
   Future<void> _refresh() async {
     try {
       final status = await _vision.getModelStatus();
-      final fm = await _vision.isFoundationModelsAvailable();
       if (!mounted) return;
       setState(() {
         _status = status;
-        _fmAvailable = fm;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _status = ModelStatus.notDownloaded;
-        _fmAvailable = false;
       });
     }
   }
@@ -824,13 +820,12 @@ class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
       return const SizedBox.shrink();
     }
     final status = _status;
-    final fmAvailable = _fmAvailable;
     // Still checking — render nothing to avoid a flash of the banner.
-    if (status == null || fmAvailable == null) return const SizedBox.shrink();
+    if (status == null) return const SizedBox.shrink();
     // A usable local backend exists → hide.
-    final smolReady =
+    final gemmaReady =
         status == ModelStatus.ready || status == ModelStatus.loaded;
-    if (smolReady || fmAvailable) return const SizedBox.shrink();
+    if (gemmaReady) return const SizedBox.shrink();
 
     final downloading = status == ModelStatus.downloading;
     final title = downloading
@@ -838,7 +833,7 @@ class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
         : 'Local vision model not installed';
     final body = downloading
         ? 'Tap to open diagnostics and see progress.'
-        : 'Tap to download (~1.6 GB, Wi-Fi recommended). Until then, Local mode falls back to a short template description.';
+        : 'Tap to download (~2.6 GB, Wi-Fi recommended). Until then, Local mode is unavailable.';
 
     return Semantics(
       button: true,
@@ -1412,9 +1407,7 @@ class _BackendPill extends StatelessWidget {
 
     final name = switch (b) {
       VisionBackend.cloud => 'Gemini',
-      VisionBackend.foundationModels => 'Foundation',
-      VisionBackend.vlm => 'SmolVLM2',
-      VisionBackend.visionOnly => 'Vision',
+      VisionBackend.gemma => 'Gemma 4 E2B',
     };
     final isCloud = b == VisionBackend.cloud;
     final icon = isCloud ? Icons.cloud_outlined : Icons.phone_iphone;

@@ -87,8 +87,8 @@ if ($OfflineVision) {
             "lib\services\on_device_vision_service.dart",
             "ios\Runner\OnDeviceVisionChannel.swift",
             "ios\Runner\VisionService.swift",
-            "ios\Runner\LlamaService.swift",
-            "ios\Runner\ModelDownloadManager.swift",
+            "ios\Runner\GemmaLiteRtService.swift",
+            "ios\Runner\GemmaModelDownloadManager.swift",
             "ios\Runner\EyePipeline\SceneContext.swift",
             "ios\Runner\EyePipeline\PerceptionLayer.swift",
             "ios\Runner\EyePipeline\FoundationModelSynthesizer.swift"
@@ -100,9 +100,7 @@ if ($OfflineVision) {
             }
         }
 
-        if (-not (Test-Path "ios\Frameworks\llama.xcframework")) {
-            Write-Warning "Missing ios\Frameworks\llama.xcframework. SmolVLM native inference cannot be validated on device until this is restored."
-        }
+        Write-Warning "Gemma LiteRT-LM runtime link must be validated on a real iPhone build; current preflight only checks Flutter/native channel wiring."
 
         if (-not (Test-Path "ios\Runner\EyePipeline\Models")) {
             Write-Warning "Missing ios\Runner\EyePipeline\Models. CoreML object/depth models must be added for full offline perception."

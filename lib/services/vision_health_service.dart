@@ -59,8 +59,8 @@ class VisionRuntimeStatus {
     required this.appleVision,
     required this.objectDetector,
     required this.depthEstimator,
-    required this.smolVlmRuntime,
-    required this.smolVlmModels,
+    required this.gemmaRuntime,
+    required this.gemmaModels,
     required this.cloudDescribe,
     required this.eyeConnection,
     this.blockingReason,
@@ -70,8 +70,8 @@ class VisionRuntimeStatus {
   final VisionRuntimeCheck appleVision;
   final VisionRuntimeCheck objectDetector;
   final VisionRuntimeCheck depthEstimator;
-  final VisionRuntimeCheck smolVlmRuntime;
-  final VisionRuntimeCheck smolVlmModels;
+  final VisionRuntimeCheck gemmaRuntime;
+  final VisionRuntimeCheck gemmaModels;
   final VisionRuntimeCheck cloudDescribe;
   final VisionRuntimeCheck eyeConnection;
   final String? blockingReason;
@@ -159,8 +159,8 @@ class VisionHealthService {
         diagnostics.depthEstimator,
         offlineStatus.depthEstimationAvailable,
       ),
-      smolVlmRuntime: _smolRuntimeCheck(offlineStatus.modelStatus),
-      smolVlmModels: _smolModelCheck(offlineStatus.modelStatus),
+      gemmaRuntime: _gemmaRuntimeCheck(offlineStatus.modelStatus),
+      gemmaModels: _gemmaModelCheck(offlineStatus.modelStatus),
       cloudDescribe: await _cloudCheck(
         includeNetworkCheck: includeNetworkCheck,
       ),
@@ -177,8 +177,8 @@ class VisionHealthService {
       appleVision: status.appleVision,
       objectDetector: status.objectDetector,
       depthEstimator: status.depthEstimator,
-      smolVlmRuntime: status.smolVlmRuntime,
-      smolVlmModels: status.smolVlmModels,
+      gemmaRuntime: status.gemmaRuntime,
+      gemmaModels: status.gemmaModels,
       cloudDescribe: status.cloudDescribe,
       eyeConnection: status.eyeConnection,
       blockingReason: _blockingReason(status),
@@ -211,40 +211,40 @@ class VisionHealthService {
     return VisionRuntimeCheck.unavailable(diagnostic.name, diagnostic.message);
   }
 
-  VisionRuntimeCheck _smolRuntimeCheck(ModelStatus status) {
+  VisionRuntimeCheck _gemmaRuntimeCheck(ModelStatus status) {
     return switch (status) {
       ModelStatus.notAvailable => VisionRuntimeCheck.unavailable(
-        'SmolVLM2 runtime',
-        'SmolVLM2 runtime is not linked into this build.',
+        'Gemma 4 E2B runtime',
+        'Gemma 4 E2B runtime is not linked into this build.',
       ),
       _ => VisionRuntimeCheck.available(
-        'SmolVLM2 runtime',
-        'SmolVLM2 runtime is linked.',
+        'Gemma 4 E2B runtime',
+        'Gemma 4 E2B runtime is linked.',
       ),
     };
   }
 
-  VisionRuntimeCheck _smolModelCheck(ModelStatus status) {
+  VisionRuntimeCheck _gemmaModelCheck(ModelStatus status) {
     return switch (status) {
       ModelStatus.loaded => VisionRuntimeCheck.available(
-        'SmolVLM2 models',
-        'SmolVLM2 model is loaded.',
+        'Gemma 4 E2B models',
+        'Gemma 4 E2B model is loaded.',
       ),
       ModelStatus.ready => VisionRuntimeCheck.available(
-        'SmolVLM2 models',
-        'SmolVLM2 model files are downloaded.',
+        'Gemma 4 E2B models',
+        'Gemma 4 E2B model files are downloaded.',
       ),
       ModelStatus.downloading => VisionRuntimeCheck.degraded(
-        'SmolVLM2 models',
-        'SmolVLM2 model download is still in progress.',
+        'Gemma 4 E2B models',
+        'Gemma 4 E2B model download is still in progress.',
       ),
       ModelStatus.notAvailable => VisionRuntimeCheck.unavailable(
-        'SmolVLM2 models',
-        'SmolVLM2 model support is unavailable in this build.',
+        'Gemma 4 E2B models',
+        'Gemma 4 E2B model support is unavailable in this build.',
       ),
       ModelStatus.notDownloaded => VisionRuntimeCheck.unavailable(
-        'SmolVLM2 models',
-        'SmolVLM2 model files are not downloaded.',
+        'Gemma 4 E2B models',
+        'Gemma 4 E2B model files are not downloaded.',
       ),
     };
   }

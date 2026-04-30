@@ -1,7 +1,7 @@
 # iCan Eye Reliability Overhaul
 
 One-page reference for the capture/live/description pipeline shipped on
-`release/eye-reliability-smolvlm2-build-25`. This is the architecture, not
+`release/eye-reliability-gemma-build-25`. This is the architecture, not
 the story — for context on what this replaced see the PR description.
 
 ## Goals
@@ -117,7 +117,7 @@ idle → starting → transferring → analyzing → speaking → cooldown → t
 | `Local L00` | Flutter local vis. | JPEG pre-validation rejected bytes before the native channel.     |
 | `Local L01` | Flutter local vis. | `MissingPluginException` — native vision channel not registered.  |
 | `Local L02` | Flutter local vis. | Apple Vision analysis failed.                                     |
-| `Local L20` | Flutter local vis. | SmolVLM2 inference failed or produced no output.                  |
+| `Local L20` | Flutter local vis. | Gemma 4 E2B inference failed or produced no output.               |
 | `Local L30` | Flutter local vis. | Apple Foundation Models failed.                                   |
 
 Each `EyeCaptureDiagnostic` exposes `.stableCode`, `.spokenMessage`, and the
@@ -133,10 +133,11 @@ Only `user` is currently emitted as the reason (response to an `ABORT`
 command). Old firmware without ABORT support emits the 3-field form; the
 Dart parser tolerates both.
 
-## SmolVLM2 model caching
+## Gemma model caching
 
 - Files live in `~/Documents/models/` with `isExcludedFromBackup = true`.
-- Each `<modelfile>.gguf` now has a sidecar `<modelfile>.gguf.verified`
+- The `gemma-4-E2B-it.litertlm` file has a sidecar
+  `gemma-4-E2B-it.litertlm.verified`
   holding `{sha256, size, mtime}` written atomically (`.verified.tmp` →
   `rename`).
 - `isFileValid(verifyHash: true)` short-circuits to true when size, mtime,
@@ -187,5 +188,5 @@ Record in the PR body:
   overlapping cycles, TTS never truncated.
 - Force a disconnect mid-session — app speaks the diagnostic once, then
   reconnects cleanly.
-- Second launch with SmolVLM2 already downloaded — no progress bar, "Check
-  Local Stack" shows ready < 1 s.
+- Second launch with Gemma already downloaded: no progress bar, Check Local
+  Stack shows ready in under 1 s.

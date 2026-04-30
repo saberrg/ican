@@ -1,39 +1,30 @@
 import CryptoKit
 import Foundation
 
-/// Downloads and validates the SmolVLM2 GGUF files used by llama.cpp.
-final class ModelDownloadManager: NSObject {
+/// Downloads and validates the Gemma 4 E2B LiteRT-LM `.litertlm` model file.
+final class GemmaModelDownloadManager: NSObject {
 
     struct ModelFile {
         let name: String
         let url: String
-        /// Expected size in bytes. Informational only — used for the pre-flight
-        /// free-space check and UI surfaces. Not compared against the
-        /// downloaded file; upstream Hugging Face metadata has shifted this
-        /// value in the past, so SHA-256 is the only integrity signal.
         let sizeBytes: UInt64
         let sha256: String
     }
 
-    static let shared = ModelDownloadManager()
+    static let shared = GemmaModelDownloadManager()
 
-    private static let baseURL = "https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF/resolve/main"
+    private static let baseURL =
+        "https://huggingface.co/\(GemmaLiteRtService.modelRepo)/resolve/\(GemmaLiteRtService.modelRevision)"
     private static let files: [ModelFile] = [
         ModelFile(
-            name: LlamaService.textModelFilename,
-            url: "\(baseURL)/\(LlamaService.textModelFilename)",
-            sizeBytes: 1_112_602_656,
-            sha256: "0cf76814555b8665149075b74ab6b5c1d428ea1d3d01c1918c12012e8d7c9f58"
-        ),
-        ModelFile(
-            name: LlamaService.visionProjectorFilename,
-            url: "\(baseURL)/\(LlamaService.visionProjectorFilename)",
-            sizeBytes: 592_523_200,
-            sha256: "ae07ea1facd07dd3230c4483b63e8cda96c6944ad2481f33d531f79e892dd024"
+            name: GemmaLiteRtService.modelFilename,
+            url: "\(baseURL)/\(GemmaLiteRtService.modelFilename)",
+            sizeBytes: GemmaLiteRtService.modelSizeBytes,
+            sha256: GemmaLiteRtService.modelSHA256
         ),
     ]
 
-    private static let minimumFreeSpaceBufferBytes: Int64 = 150 * 1024 * 1024
+    private static let minimumFreeSpaceBufferBytes: Int64 = 300 * 1024 * 1024
 
     private var downloadTasks: [URLSessionDownloadTask] = []
     private var session: URLSession?
@@ -48,8 +39,6 @@ final class ModelDownloadManager: NSObject {
     private override init() {
         super.init()
     }
-
-    // MARK: - Public API
 
     func startDownload(
         onProgress: @escaping ([String: Any]) -> Void,
@@ -67,14 +56,14 @@ final class ModelDownloadManager: NSObject {
         completed = false
         isDownloading = true
 
-        let modelsDir = LlamaService.modelsDirectory()
+        let modelsDir = GemmaLiteRtService.modelsDirectory()
         do {
             try FileManager.default.createDirectory(
                 at: modelsDir,
                 withIntermediateDirectories: true
             )
             try excludeFromBackup(modelsDir)
-            purgeOrphanModelFiles(in: modelsDir)
+            purgeLegacyModelFiles(in: modelsDir)
             try ensureFreeSpaceForMissingFiles(in: modelsDir)
         } catch {
             finish(success: false, error: error.localizedDescription)
@@ -83,7 +72,7 @@ final class ModelDownloadManager: NSObject {
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
-        config.timeoutIntervalForResource = 3600
+        config.timeoutIntervalForResource = 7200
         config.waitsForConnectivity = true
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
@@ -104,22 +93,21 @@ final class ModelDownloadManager: NSObject {
     }
 
     func deleteModel() -> Bool {
-        let modelsDir = LlamaService.modelsDirectory()
+        let modelsDir = GemmaLiteRtService.modelsDirectory()
         do {
             if FileManager.default.fileExists(atPath: modelsDir.path) {
                 try FileManager.default.removeItem(at: modelsDir)
             }
             return true
         } catch {
-            print("[ModelDownload] Failed to delete models: \(error)")
+            print("[GemmaDownload] Failed to delete models: \(error)")
             return false
         }
     }
 
     func getModelInfo() -> [String: Any] {
-        let modelsDir = LlamaService.modelsDirectory()
+        let modelsDir = GemmaLiteRtService.modelsDirectory()
         let fileStates = getModelFileIntegrityReport(verifyHash: false)
-
         let downloadedBytes = fileStates.reduce(UInt64(0)) { total, state in
             total + UInt64((state["sizeBytes"] as? Int) ?? 0)
         }
@@ -133,13 +121,15 @@ final class ModelDownloadManager: NSObject {
             "sizeBytes": Int(downloadedBytes),
             "requiredBytes": Int(requiredBytes),
             "path": modelsDir.path,
-            "modelName": "SmolVLM2-2.2B-Instruct Q4_K_M",
+            "modelName": GemmaLiteRtService.modelName,
+            "modelRepo": GemmaLiteRtService.modelRepo,
+            "modelRevision": GemmaLiteRtService.modelRevision,
             "files": fileStates,
         ]
     }
 
     func getModelFileIntegrityReport(verifyHash: Bool) -> [[String: Any]] {
-        let modelsDir = LlamaService.modelsDirectory()
+        let modelsDir = GemmaLiteRtService.modelsDirectory()
         return Self.files.map { file -> [String: Any] in
             let url = modelsDir.appendingPathComponent(file.name)
             let size = fileSize(at: url)
@@ -161,22 +151,23 @@ final class ModelDownloadManager: NSObject {
         }
     }
 
-    // MARK: - Private
-
     private func downloadNextFile() {
         guard filesDownloaded < Self.files.count else {
             let allValid = Self.files.allSatisfy {
-                isFileValid($0, at: LlamaService.modelsDirectory().appendingPathComponent($0.name), verifyHash: true)
+                isFileValid(
+                    $0,
+                    at: GemmaLiteRtService.modelsDirectory().appendingPathComponent($0.name),
+                    verifyHash: true
+                )
             }
-            finish(success: allValid, error: allValid ? nil : "Downloaded model validation failed.")
+            finish(success: allValid, error: allValid ? nil : "Downloaded Gemma model validation failed.")
             return
         }
 
         let file = Self.files[filesDownloaded]
-        let destURL = LlamaService.modelsDirectory().appendingPathComponent(file.name)
+        let destURL = GemmaLiteRtService.modelsDirectory().appendingPathComponent(file.name)
 
         if isFileValid(file, at: destURL, verifyHash: true) {
-            print("[ModelDownload] \(file.name) already valid, skipping")
             filesDownloaded += 1
             currentFileProgress = 0
             progressCallback?(progressPayload(status: "downloading", phase: "skipped", fileName: file.name))
@@ -193,7 +184,6 @@ final class ModelDownloadManager: NSObject {
             return
         }
 
-        print("[ModelDownload] Starting download: \(file.name)")
         progressCallback?(progressPayload(status: "downloading", phase: "downloading", fileName: file.name))
         let task = session!.downloadTask(with: url)
         downloadTasks.append(task)
@@ -238,29 +228,21 @@ final class ModelDownloadManager: NSObject {
             let url = modelsDir.appendingPathComponent(file.name)
             return isFileValid(file, at: url, verifyHash: false) ? total : total + file.sizeBytes
         }
-
         let values = try modelsDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        guard let available = values.volumeAvailableCapacityForImportantUsage else {
-            return
-        }
-
+        guard let available = values.volumeAvailableCapacityForImportantUsage else { return }
         let required = Int64(missingBytes) + Self.minimumFreeSpaceBufferBytes
         if available < required {
             throw NSError(
-                domain: "ModelDownloadManager",
+                domain: "GemmaModelDownloadManager",
                 code: 1,
                 userInfo: [
-                    NSLocalizedDescriptionKey: "Not enough free storage for offline model. Need about \(formatBytes(UInt64(required)))."
+                    NSLocalizedDescriptionKey: "Not enough free storage for Gemma local model. Need about \(formatBytes(UInt64(required)))."
                 ]
             )
         }
     }
 
     private func isFileValid(_ file: ModelFile, at url: URL, verifyHash: Bool) -> Bool {
-        // File must exist and be non-empty — zero-byte files are never valid.
-        // Size is NOT compared to the pinned constant: upstream metadata on
-        // Hugging Face has quietly shifted the file's byte count before, and
-        // SHA-256 is the authoritative integrity signal.
         let size = fileSize(at: url)
         guard size > 0 else {
             invalidateSidecar(for: url)
@@ -268,12 +250,6 @@ final class ModelDownloadManager: NSObject {
         }
         guard verifyHash else { return true }
 
-        // Fast path: a sidecar file recorded a matching hash earlier. We trust
-        // it as long as the main file's size + modification time match what
-        // we saw at verification time. Full SHA256 on ~440 MB models takes
-        // ~20-30 s on older devices, so skipping it on every launch is
-        // load-bearing for the "SmolVLM2 does not appear to re-download"
-        // acceptance criterion.
         if let sidecar = readSidecar(for: url),
            sidecar.sizeBytes == size,
            sidecar.sha256.caseInsensitiveCompare(file.sha256) == .orderedSame,
@@ -282,8 +258,6 @@ final class ModelDownloadManager: NSObject {
             return true
         }
 
-        // Slow path: recompute and, on success, persist a sidecar so future
-        // launches take the fast path above.
         guard
             let actual = sha256Hex(of: url),
             actual.caseInsensitiveCompare(file.sha256) == .orderedSame
@@ -304,8 +278,6 @@ final class ModelDownloadManager: NSObject {
         return true
     }
 
-    // MARK: - Sidecar (.verified) helpers
-
     private struct VerifiedSidecar {
         let sha256: String
         let sizeBytes: UInt64
@@ -313,7 +285,7 @@ final class ModelDownloadManager: NSObject {
     }
 
     private func sidecarURL(for url: URL) -> URL {
-        return url.appendingPathExtension("verified")
+        url.appendingPathExtension("verified")
     }
 
     private func readSidecar(for url: URL) -> VerifiedSidecar? {
@@ -340,12 +312,7 @@ final class ModelDownloadManager: NSObject {
             "size": NSNumber(value: entry.sizeBytes),
             "mtime": NSNumber(value: entry.mtimeEpoch),
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else {
-            return
-        }
-        // Atomic: write to a temp path in the same directory, then rename.
-        // A crash mid-write would otherwise wedge future launches into a full
-        // rehash even though the model itself is fine.
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
         let tmp = sidecar.appendingPathExtension("tmp")
         do {
             if FileManager.default.fileExists(atPath: tmp.path) {
@@ -356,13 +323,12 @@ final class ModelDownloadManager: NSObject {
                 try FileManager.default.removeItem(at: sidecar)
             }
             try FileManager.default.moveItem(at: tmp, to: sidecar)
-            // Exclude from backup so Apple doesn't try to upload a cache tag.
             var mutable = sidecar
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try? mutable.setResourceValues(values)
         } catch {
-            print("[ModelDownload] Failed to persist sidecar for \(url.lastPathComponent): \(error)")
+            print("[GemmaDownload] Failed to persist sidecar for \(url.lastPathComponent): \(error)")
         }
     }
 
@@ -374,18 +340,12 @@ final class ModelDownloadManager: NSObject {
     }
 
     private func fileModificationTime(at url: URL) -> Date? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return nil
-        }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
         return attrs[.modificationDate] as? Date
     }
 
     private func fileSize(at url: URL) -> UInt64 {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? UInt64 else {
-            return 0
-        }
-        return size
+        GemmaLiteRtService.fileSize(at: url)
     }
 
     private func sha256Hex(of url: URL) -> String? {
@@ -403,23 +363,19 @@ final class ModelDownloadManager: NSObject {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Remove `.gguf` files in the models directory that don't match the
-    /// currently-expected set. Prevents previous model downloads (e.g. the
-    /// old 500M files after an upgrade to the 2.2B model) from wasting disk.
-    private func purgeOrphanModelFiles(in modelsDir: URL) {
+    private func purgeLegacyModelFiles(in modelsDir: URL) {
         let expected = Set(Self.files.map { $0.name })
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: modelsDir,
             includingPropertiesForKeys: nil
         )) ?? []
         for url in contents {
-            guard url.pathExtension.lowercased() == "gguf" else { continue }
-            if !expected.contains(url.lastPathComponent) {
+            let ext = url.pathExtension.lowercased()
+            let name = url.lastPathComponent
+            guard ext == "gguf" || ext == "litertlm" || ext == "verified" else { continue }
+            if !expected.contains(name) && !expected.contains(url.deletingPathExtension().lastPathComponent) {
                 try? FileManager.default.removeItem(at: url)
-                // Clean up the matching .verified sidecar too.
-                let sidecar = url.appendingPathExtension("verified")
-                try? FileManager.default.removeItem(at: sidecar)
-                print("[ModelDownload] Purged orphan model file: \(url.lastPathComponent)")
+                print("[GemmaDownload] Purged legacy model file: \(name)")
             }
         }
     }
@@ -437,9 +393,7 @@ final class ModelDownloadManager: NSObject {
     }
 }
 
-// MARK: - URLSessionDownloadDelegate
-
-extension ModelDownloadManager: URLSessionDownloadDelegate {
+extension GemmaModelDownloadManager: URLSessionDownloadDelegate {
 
     func urlSession(
         _ session: URLSession,
@@ -460,15 +414,13 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
             return
         }
 
-        let destURL = LlamaService.modelsDirectory().appendingPathComponent(file.name)
+        let destURL = GemmaLiteRtService.modelsDirectory().appendingPathComponent(file.name)
         do {
             if FileManager.default.fileExists(atPath: destURL.path) {
                 try FileManager.default.removeItem(at: destURL)
             }
             try FileManager.default.moveItem(at: location, to: destURL)
             try excludeFromBackup(destURL)
-            print("[ModelDownload] Saved and verified: \(file.name)")
-
             filesDownloaded += 1
             currentFileProgress = 0
             progressCallback?(progressPayload(status: "downloading", phase: "verified", fileName: file.name))
@@ -496,7 +448,7 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
         if let error {
             let nsError = error as NSError
             if nsError.code == NSURLErrorCancelled {
-                print("[ModelDownload] Download cancelled")
+                print("[GemmaDownload] Download cancelled")
             } else {
                 finish(success: false, error: error.localizedDescription)
             }

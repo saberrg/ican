@@ -124,47 +124,7 @@ ensure_cmake() {
 
   ensure_command cmake
 }
-
-prepare_llama_cpp() {
-  local llama_dir="${LLAMA_CPP_DIR:-$HOME/Desktop/llama.cpp}"
-  local llama_ref="${LLAMA_CPP_REF:-}"
-
-  if [[ ! -d "$llama_dir/.git" ]]; then
-    if [[ "${ICAN_ALLOW_BOOTSTRAP:-0}" != "1" ]]; then
-      fail "llama.cpp is missing at $llama_dir. Set ICAN_ALLOW_BOOTSTRAP=1 to clone it."
-    fi
-    git clone https://github.com/ggml-org/llama.cpp "$llama_dir"
-  fi
-
-  if [[ -n "$llama_ref" ]]; then
-    git -C "$llama_dir" fetch --tags origin
-    git -C "$llama_dir" checkout --detach "$llama_ref"
-  fi
-
-  printf '%s' "$llama_dir"
-}
-
-ensure_llama_framework() {
-  local device_lib="ios/Frameworks/llama.xcframework/ios-arm64/libllama.a"
-  local sim_lib="ios/Frameworks/llama.xcframework/ios-arm64_x86_64-simulator/libllama.a"
-  if [[ -f "$device_lib" && -f "$sim_lib" ]]; then
-    return
-  fi
-
-  printf 'Missing llama static library slices:\n' >&2
-  [[ -f "$device_lib" ]] || printf '  %s\n' "$device_lib" >&2
-  [[ -f "$sim_lib" ]] || printf '  %s\n' "$sim_lib" >&2
-
-  if [[ "${ICAN_BUILD_LLAMA:-0}" != "1" ]]; then
-    fail "llama.xcframework libraries are missing. Set ICAN_BUILD_LLAMA=1 to rebuild from llama.cpp."
-  fi
-
-  ensure_cmake
-  local llama_dir
-  llama_dir="$(prepare_llama_cpp)"
-  bash scripts/build_llama_ios.sh "$llama_dir"
-}
-
+`n
 if [[ "$(uname -s)" != "Darwin" ]]; then
   fail "This script must run on macOS"
 fi
@@ -227,8 +187,8 @@ if [[ "$missing_models" == "1" ]]; then
   fi
 fi
 
-log "llama.xcframework"
-ensure_llama_framework
+log "Gemma LiteRT-LM"
+printf 'Gemma local inference uses Google AI Edge LiteRT-LM; link the iOS runtime in Xcode before device validation.\n'
 
 if [[ "${ICAN_SKIP_SIGNING_CHECK:-0}" == "1" ]]; then
   log "Signing identity"

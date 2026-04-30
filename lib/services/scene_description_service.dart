@@ -16,10 +16,7 @@ enum VisionMode {
     'Auto: cloud reliable',
     'Uses Gemini cloud first; local only when cloud is unavailable',
   ),
-  offlineOnly(
-    'Offline: device only',
-    'Uses on-device Apple Vision and a local model only when healthy',
-  ),
+  offlineOnly('Offline: device only', 'Uses on-device Gemma only when healthy'),
   cloudOnly('Cloud', 'Always uses Gemini cloud API');
 
   const VisionMode(this.label, this.description);
@@ -30,9 +27,7 @@ enum VisionMode {
 /// Which backend was used for the most recent description.
 enum VisionBackend {
   cloud,
-  foundationModels, // Apple Foundation Models snapshot synthesis.
-  vlm, // Local snapshot VLM.
-  visionOnly, // Apple Vision template only.
+  gemma, // Local Gemma 4 E2B snapshot image-to-text.
 }
 
 class SceneDescriptionResult {
@@ -247,121 +242,44 @@ class SceneDescriptionService extends ChangeNotifier {
     ScenePromptContext promptContext = const ScenePromptContext(),
   }) async {
     _lastCompletionMetadata = SceneCompletionMetadata.complete;
-    debugPrint('[SceneDescription] Using explicit backend: stable offline');
+    debugPrint('[SceneDescription] Using explicit backend: Gemma local');
 
-    VisionAnalysis perception;
-    try {
-      perception = await _analyzeOfflinePerception(imageBytes);
-    } catch (e) {
-      throw SceneDescriptionException.localVision(e);
-    }
-
-    // Offline always uses the detailed prompt — brief produces output too short
-    // for the local model to be worth running.
     final offlineContext = ScenePromptContext(
       detailLevel: DetailLevel.detailed,
       hazardSensitivity: promptContext.hazardSensitivity,
     );
     final prompt = const ScenePromptBuilder().build(offlineContext);
 
-    // Build the rich perception template up front — this is the deterministic
-    // spine of the response (hazards + clock positions + objects). We will
-    // always speak it; the generative backend adds scene *meaning* on top when
-    // it's available, rather than competing with it.
-    final templateText = await _templateDescriptionFor(perception, imageBytes);
-
-    String? modelText;
-    VisionBackend? modelBackend;
-
-    if (await _isFoundationModelsUsable()) {
-      modelText = await _collectLocalGenerativeText(
-        label: 'Foundation Models',
-        collect: () => _collectFoundationModelsText(
-          perception,
-          systemPrompt: prompt.systemPrompt,
+    final ready = await _isGemmaReadyForDescribe(
+      imageBytes,
+      systemPrompt: prompt.systemPrompt,
+    );
+    if (!ready) {
+      throw SceneDescriptionException.localVision(
+        const LocalVisionException(
+          'Local L20',
+          'Gemma 4 E2B has not passed local readiness checks.',
         ),
       );
-      if (modelText != null) modelBackend = VisionBackend.foundationModels;
     }
 
-    if (modelText == null &&
-        await _isSmolVlmReadyForDescribe(
-          imageBytes,
-          systemPrompt: prompt.systemPrompt,
-        )) {
-      modelText = await _collectLocalGenerativeText(
-        label: 'SmolVLM2',
-        collect: () => _collectVlmText(
-          imageBytes,
-          perception,
-          systemPrompt: prompt.systemPrompt,
-        ),
-      );
-      if (modelText != null) modelBackend = VisionBackend.vlm;
-    }
-
-    final combined = _combineOfflineText(modelText, templateText);
-    final backend = modelBackend ?? VisionBackend.visionOnly;
-    return _offlineResult(combined, backend);
-  }
-
-  /// Collects a local model's output without any "substantiality" gating. The
-  /// caller always combines the result with the perception template, so even
-  /// a single clean sentence from the model adds real value rather than being
-  /// discarded.
-  Future<String?> _collectLocalGenerativeText({
-    required String label,
-    required Future<String> Function() collect,
-  }) async {
     try {
-      final text = await collect();
+      final text = await _collectGemmaText(
+        imageBytes,
+        systemPrompt: prompt.systemPrompt,
+      );
       final cleaned = _cleanLocalDescriptionText(text);
       if (cleaned.isEmpty) {
-        debugPrint('[SceneDescription] $label produced no usable output');
-        return null;
+        throw const LocalVisionException(
+          'Local L20',
+          'Gemma 4 E2B produced no usable local description.',
+        );
       }
-      _lastCompletionMetadata = SceneCompletionMetadata.complete;
-      return cleaned;
+      return _offlineResult(cleaned, VisionBackend.gemma);
     } catch (e) {
-      debugPrint('[SceneDescription] $label failed; falling back: $e');
-      return null;
+      if (e is SceneDescriptionException) rethrow;
+      throw SceneDescriptionException.localVision(e);
     }
-  }
-
-  /// Merges the generative output with the perception template so the user
-  /// always hears the hard facts (hazards, clock positions, objects) even if
-  /// the model only managed a single sentence. Generative text leads because
-  /// it describes scene *meaning*; template trails with concrete spatial facts.
-  static String _combineOfflineText(String? modelText, String templateText) {
-    final model = (modelText ?? '').trim();
-    final template = templateText.trim();
-    if (model.isEmpty) return template;
-    if (template.isEmpty || template == 'Scene unclear, try again.') {
-      return model;
-    }
-    final modelLower = model.toLowerCase();
-    // If the model's output already covers hazards + clock orientation, don't
-    // stack the template on top — stays under the spoken-length budget.
-    final modelHasClock =
-        modelLower.contains("o'clock") ||
-        modelLower.contains('o clock') ||
-        modelLower.contains('oclock');
-    final templateRedundant =
-        template.startsWith('Caution:') &&
-        modelLower.contains('caution') &&
-        modelHasClock;
-    if (templateRedundant) return model;
-    // Also skip if the model is already substantial (3+ sentences) AND uses
-    // clock positions — the template would just repeat what was said.
-    final modelSentences = RegExp(
-      r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''',
-    ).allMatches(model).length;
-    if (modelSentences >= 3 && modelHasClock) return model;
-    final separator =
-        model.endsWith('.') || model.endsWith('!') || model.endsWith('?')
-        ? ' '
-        : '. ';
-    return '$model$separator$template';
   }
 
   Future<SceneDescriptionResult> _describeAutoForCompatibility(
@@ -382,7 +300,7 @@ class SceneDescriptionService extends ChangeNotifier {
       throw SceneDescriptionException.localVision(
         const LocalVisionException(
           'Local L02',
-          'Local vision is unavailable until Apple Vision passes health checks.',
+          'Local Gemma is unavailable until native health checks pass.',
         ),
         cloudFailure: _lastCloudFailure,
       );
@@ -397,7 +315,7 @@ class SceneDescriptionService extends ChangeNotifier {
       try {
         final nativeReady = await onDeviceService.pingNativeChannel();
         if (!nativeReady) return false;
-        return await onDeviceService.isAppleVisionAvailable();
+        return true;
       } catch (e) {
         debugPrint('[SceneDescription] Local health check failed: $e');
         return false;
@@ -420,99 +338,36 @@ class SceneDescriptionService extends ChangeNotifier {
 
   static const Duration _localGenerationTimeout = Duration(seconds: 45);
 
-  Future<bool> _isFoundationModelsUsable() async {
-    try {
-      return await onDeviceService.isFoundationModelsAvailable();
-    } catch (e) {
-      debugPrint('[SceneDescription] Foundation Models status failed: $e');
-      return false;
-    }
-  }
-
-  Future<bool> _isSmolVlmReadyForDescribe(
+  Future<bool> _isGemmaReadyForDescribe(
     Uint8List imageBytes, {
     required String systemPrompt,
   }) async {
     try {
-      final ready = await onDeviceService.isSmolVlmReadyForDescribe(
+      final ready = await onDeviceService.isGemmaReadyForDescribe(
         imageBytes,
         systemPrompt: systemPrompt,
       );
       if (!ready) {
-        debugPrint('[SceneDescription] SmolVLM2 readiness probe not passed');
+        debugPrint('[SceneDescription] Gemma readiness probe not passed');
       }
       return ready;
     } catch (e) {
-      debugPrint('[SceneDescription] SmolVLM2 readiness check failed: $e');
+      debugPrint('[SceneDescription] Gemma readiness check failed: $e');
       return false;
     }
   }
 
-  Future<VisionAnalysis> _analyzeOfflinePerception(Uint8List imageBytes) async {
-    try {
-      return await onDeviceService.analyzeScene(imageBytes);
-    } catch (e, st) {
-      debugPrint(
-        '[SceneDescription] Full offline perception unavailable '
-        '(${e.runtimeType}); using Apple Vision basics: $e\n$st',
-      );
-      return onDeviceService.analyzeWithVision(imageBytes);
-    }
-  }
-
-  /// Returns the best template description available. If the perception we have
-  /// is only the basic Apple Vision path, gives the rich YOLO+depth path one
-  /// more chance before committing to the sparse template.
-  Future<String> _templateDescriptionFor(
-    VisionAnalysis perception,
-    Uint8List imageBytes,
-  ) async {
-    if (perception is ScenePerceptionResult) {
-      return perception.toTemplateDescription();
-    }
-    try {
-      final richer = await onDeviceService.analyzeScene(imageBytes);
-      return richer.toTemplateDescription();
-    } catch (e) {
-      debugPrint(
-        '[SceneDescription] Rich-template second chance failed '
-        '(${e.runtimeType}); falling back to Apple Vision template: $e',
-      );
-    }
-    return perception.toTemplateDescription();
-  }
-
-  Future<String> _collectFoundationModelsText(
-    VisionAnalysis perception, {
-    required String systemPrompt,
-  }) async {
-    final context = perception.toPromptContext();
-    return _collectLocalTokenStream(
-      onDeviceService.synthesizeWithFoundationModels(
-        context,
-        systemPrompt: systemPrompt,
-      ),
-      label: 'Foundation Models',
-    );
-  }
-
-  Future<String> _collectVlmText(
-    Uint8List imageBytes,
-    VisionAnalysis perception, {
+  Future<String> _collectGemmaText(
+    Uint8List imageBytes, {
     required String systemPrompt,
   }) {
-    final context = perception.toPromptContext();
-    final enhancedPrompt = context.isNotEmpty
-        ? '$systemPrompt\n\nUse the sensor context below for hazards, clock positions, depth, people, and visible text. Do not ignore it. Produce the full requested 3 to 5 sentence answer.\n\n$context'
-        : systemPrompt;
     return _vlmLock.run(
       () => _collectLocalTokenStream(
-        onDeviceService.describeWithVlm(
+        onDeviceService.describeWithGemma(
           imageBytes,
-          systemPrompt: enhancedPrompt,
-          visionContext: context.isEmpty ? null : context,
+          systemPrompt: systemPrompt,
         ),
-        label: 'SmolVLM2',
+        label: 'Gemma 4 E2B',
       ),
     );
   }
@@ -601,32 +456,18 @@ class SceneDescriptionService extends ChangeNotifier {
     );
   }
 
-  Stream<String> describeWithFoundationModels(
-    Uint8List imageBytes, {
-    required String systemPrompt,
-  }) {
-    return _describeWithFoundationModels(
-      imageBytes,
-      systemPrompt: systemPrompt,
-    );
-  }
-
-  Stream<String> describeWithSmolVLM(
+  Stream<String> describeWithGemma(
     Uint8List imageBytes, {
     required String systemPrompt,
   }) async* {
-    final ready = await onDeviceService.isSmolVlmReadyForDescribe(
+    final ready = await onDeviceService.isGemmaReadyForDescribe(
       imageBytes,
       systemPrompt: systemPrompt,
     );
     if (!ready) {
-      throw StateError('SmolVLM2 has not passed the readiness probe.');
+      throw StateError('Gemma 4 E2B has not passed the readiness probe.');
     }
-    yield* _describeWithVlm(
-      imageBytes,
-      systemPrompt: systemPrompt,
-      allowTemplateFallback: false,
-    );
+    yield await _collectGemmaText(imageBytes, systemPrompt: systemPrompt);
   }
 
   Stream<String> describeWithVisionTemplate(Uint8List imageBytes) {
@@ -935,91 +776,6 @@ class SceneDescriptionService extends ChangeNotifier {
 
   static void _recordCloudLog(String message) {
     unawaited(AppLogService.instance.record(message, source: 'describe'));
-  }
-
-  /// Foundation Models path: Apple Vision facts -> Apple LLM synthesis.
-  Stream<String> _describeWithFoundationModels(
-    Uint8List imageBytes, {
-    required String systemPrompt,
-  }) async* {
-    final perception = await onDeviceService.analyzeWithVision(imageBytes);
-    final context = perception.toPromptContext();
-
-    debugPrint('[SceneDescription] FM context: $context');
-
-    var gotTokens = false;
-    try {
-      await for (final token in onDeviceService.synthesizeWithFoundationModels(
-        context,
-        systemPrompt: systemPrompt,
-      )) {
-        gotTokens = true;
-        yield token;
-      }
-    } catch (e) {
-      debugPrint('[SceneDescription] Foundation Models failed: $e');
-    }
-
-    if (!gotTokens) {
-      debugPrint('[SceneDescription] FM produced no output; using template');
-      yield perception.toTemplateDescription();
-    }
-  }
-
-  /// VLM path: Apple Vision context fed into the local snapshot VLM.
-  ///
-  /// When [allowTemplateFallback] is true (the default auto-mode path) the
-  /// stream *never* throws once perception has succeeded: VLM crashes or
-  /// timeouts downgrade to the Layer 1 template so a blind user always hears
-  /// something useful. The diagnostic-direct path on the developer screen
-  /// sets the flag to false so raw errors surface.
-  Stream<String> _describeWithVlm(
-    Uint8List imageBytes, {
-    required String systemPrompt,
-    bool allowTemplateFallback = true,
-  }) async* {
-    VisionAnalysis? perception;
-    try {
-      perception = await onDeviceService.analyzeWithVision(imageBytes);
-    } catch (e) {
-      debugPrint('[SceneDescription] Perception failed before VLM: $e');
-      if (!allowTemplateFallback) rethrow;
-      yield 'Scene analysis unavailable on device right now.';
-      return;
-    }
-    final context = perception.toPromptContext();
-
-    debugPrint('[SceneDescription] VLM context: $context');
-
-    final enhancedPrompt = context.isNotEmpty
-        ? '$systemPrompt\n\n$context\n\nDescribe this scene incorporating the context above. Produce the full requested 3 to 5 complete spoken sentences.'
-        : systemPrompt;
-
-    var gotTokens = false;
-    try {
-      await for (final token in onDeviceService.describeWithVlm(
-        imageBytes,
-        systemPrompt: enhancedPrompt,
-        visionContext: context.isEmpty ? null : context,
-      )) {
-        gotTokens = true;
-        yield token;
-      }
-    } catch (e) {
-      debugPrint('[SceneDescription] VLM inference failed: $e');
-      if (!allowTemplateFallback) rethrow;
-    }
-
-    if (!gotTokens) {
-      if (!allowTemplateFallback) {
-        throw const LocalVisionException(
-          'Local L20',
-          'SmolVLM2 produced no output.',
-        );
-      }
-      debugPrint('[SceneDescription] VLM produced no output; using template');
-      yield perception.toTemplateDescription();
-    }
   }
 
   /// Vision-only path: Layer 1 template, no VLM needed.

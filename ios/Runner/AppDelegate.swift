@@ -27,9 +27,9 @@ import UIKit
 
   override func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
     super.applicationDidReceiveMemoryWarning(application)
-    // Free the VLM to reclaim ~800MB under memory pressure
-    LlamaService.shared.noteMemoryWarning()
-    LlamaService.shared.unloadModel()
+    // Let the Gemma runtime release memory under pressure when it is linked.
+    GemmaLiteRtService.shared.noteMemoryWarning()
+    GemmaLiteRtService.shared.unloadModel()
   }
 
   private func registerAppLogChannel(with messenger: FlutterBinaryMessenger) {

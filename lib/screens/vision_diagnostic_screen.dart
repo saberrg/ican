@@ -25,7 +25,6 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
 
   // ── Model download state ──
   ModelStatus _modelStatus = ModelStatus.notDownloaded;
-  String _fmReason = 'unknown';
   StreamSubscription<ModelDownloadEvent>? _downloadSub;
   double _downloadProgress = 0;
   String _downloadPhase = '';
@@ -47,11 +46,9 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   Future<void> _refreshQuickStatus() async {
     try {
       final status = await _vision.getModelStatus();
-      final reason = await _vision.foundationModelsAvailabilityReason();
       if (!mounted) return;
       setState(() {
         _modelStatus = status;
-        _fmReason = reason;
       });
     } catch (_) {
       // Silent — the full diagnostic run will surface errors.
@@ -95,36 +92,32 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       final nativeReady = await _vision.pingNativeChannel();
       final appleVision = nativeReady && await _vision.isAppleVisionAvailable();
       final offline = await _vision.getOfflineVisionStatus();
-      final fmReason = await _vision.foundationModelsAvailabilityReason();
       final nativeModels = await _vision.getOfflineVisionDiagnostics();
       final readinessSnapshot = await _vision
-          .getSmolVlmReadinessSupportSnapshot();
-      var smolVlmLoad = 'skipped';
+          .getGemmaReadinessSupportSnapshot();
+      var gemmaLoad = 'skipped';
       if (offline.modelStatus == ModelStatus.loaded) {
-        smolVlmLoad = 'already loaded';
+        gemmaLoad = 'already loaded';
       } else if (offline.modelStatus == ModelStatus.ready) {
-        final loaded = await _vision.loadVlmModel();
-        smolVlmLoad = loaded ? 'loaded successfully' : 'load failed';
+        final loaded = await _vision.loadGemmaModel();
+        gemmaLoad = loaded ? 'loaded successfully' : 'load failed';
       }
       lines.addAll([
         'Native channel: ${nativeReady ? 'ready' : 'unavailable'}',
         'Apple Vision: ${appleVision ? 'ready' : 'unavailable'}',
-        'Foundation Models: ${_foundationModelsLine(fmReason)}',
-        'SmolVLM2 status: ${_modelStatusLabel(offline.modelStatus)}',
-        'SmolVLM2 load: $smolVlmLoad',
-        'Vision template fallback: ${appleVision ? 'ready' : 'unavailable'}',
+        'Gemma 4 E2B status: ${_modelStatusLabel(offline.modelStatus)}',
+        'Gemma 4 E2B load: $gemmaLoad',
         'Best local backend: ${offline.bestLocalBackendLabel}',
         'YOLOv3 Tiny: ${offline.objectDetectionAvailable ? 'ready' : 'unavailable'}',
         'Depth Anything: ${offline.depthEstimationAvailable ? 'ready' : 'unavailable'}',
         'YOLO detail: ${nativeModels.objectDetector.message}',
         'Depth detail: ${nativeModels.depthEstimator.message}',
-        'SmolVLM2 readiness snapshot:',
+        'Gemma 4 E2B readiness snapshot:',
         readinessSnapshot,
       ]);
       if (mounted) {
         setState(() {
           _modelStatus = offline.modelStatus;
-          _fmReason = fmReason;
         });
       }
     } catch (e) {
@@ -203,9 +196,9 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   Future<void> _loadModelNow() async {
     setState(() => _loading = true);
     try {
-      await _vision.loadVlmModel();
+      await _vision.loadGemmaModel();
     } catch (_) {
-      // loadVlmModel already handles its own errors and returns false.
+      // loadGemmaModel already handles its own errors and returns false.
     }
     if (!mounted) return;
     setState(() => _loading = false);
@@ -221,7 +214,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete SmolVLM2?'),
+        title: const Text('Delete Gemma 4 E2B?'),
         content: const Text(
           'This removes the downloaded local model. You can redownload it later.',
         ),
@@ -245,25 +238,6 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       _downloadPhase = '';
     });
     await _refreshQuickStatus();
-  }
-
-  String _foundationModelsLine(String reason) {
-    switch (reason) {
-      case 'available':
-        return 'ready';
-      case 'appleIntelligenceDisabled':
-        return 'turn on Apple Intelligence in Settings → Apple Intelligence & Siri';
-      case 'deviceNotEligible':
-        return 'not supported on this device';
-      case 'modelDownloading':
-        return 'system model is still downloading';
-      case 'iosTooOld':
-        return 'requires iOS 26 or newer';
-      case 'frameworkMissing':
-        return 'framework not linked in this build';
-      default:
-        return 'unavailable';
-    }
   }
 
   String _modelStatusLabel(ModelStatus status) {
@@ -312,8 +286,6 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
                     children: [
                       _buildModelSection(),
                       const SizedBox(height: AppSpacing.sm),
-                      _buildFoundationModelsRow(),
-                      const SizedBox(height: AppSpacing.sm),
                       DecoratedBox(
                         decoration: BoxDecoration(
                           color: AppColors.surfaceCardLight,
@@ -350,7 +322,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            'Local Vision Model (SmolVLM2)',
+            'Local Vision Model (Gemma 4 E2B)',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
@@ -373,7 +345,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
               label: 'Cancel Download',
-              hint: 'Stops the SmolVLM2 download',
+              hint: 'Stops the Gemma 4 E2B download',
               onPressed: _cancelDownload,
             ),
           ] else if (_modelStatus == ModelStatus.notDownloaded) ...[
@@ -384,7 +356,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             ),
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
-              label: 'Download SmolVLM2',
+              label: 'Download Gemma 4 E2B',
               hint:
                   'Downloads the local vision model so Local mode works offline',
               onPressed: _startDownload,
@@ -392,7 +364,9 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
           ] else if (_modelStatus == ModelStatus.ready) ...[
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
-              label: _loading ? 'Loading SmolVLM2...' : 'Load SmolVLM2 now',
+              label: _loading
+                  ? 'Loading Gemma 4 E2B...'
+                  : 'Load Gemma 4 E2B now',
               hint:
                   'Loads the downloaded model into memory so Local mode can use it',
               onPressed: _loading ? null : _loadModelNow,
@@ -407,7 +381,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
               label: 'Delete Downloaded Model',
-              hint: 'Removes the local SmolVLM2 files',
+              hint: 'Removes the local Gemma 4 E2B files',
               onPressed: _deleteModel,
             ),
           ] else if (_modelStatus == ModelStatus.loaded) ...[
@@ -421,7 +395,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
               label: 'Delete Downloaded Model',
-              hint: 'Removes the local SmolVLM2 files',
+              hint: 'Removes the local Gemma 4 E2B files',
               onPressed: _deleteModel,
             ),
           ],
@@ -432,29 +406,6 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
               style: const TextStyle(color: Colors.redAccent),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFoundationModelsRow() {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceCardLight,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.borderLight),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.auto_awesome, color: AppColors.textSecondaryOnLight),
-          const SizedBox(width: AppSpacing.xs),
-          Expanded(
-            child: Text(
-              'Foundation Models: ${_foundationModelsLine(_fmReason)}',
-              style: const TextStyle(color: AppColors.textOnLight),
-            ),
-          ),
         ],
       ),
     );

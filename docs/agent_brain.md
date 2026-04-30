@@ -125,7 +125,7 @@ Known weak points:
 - Real iPhone microphone flow is not manually verified yet.
 - Real Eye BLE capture is not manually verified yet.
 - BLE image assembly still accepts some partial/truncated frames.
-- `ios\Frameworks\llama.xcframework` is missing.
+- Gemma LiteRT-LM iOS runtime still needs a real iPhone/Xcode link validation.
 - YOLO/depth Core ML assets are not proven in the Xcode Runner target.
 - Standalone live detection may fail if object detection model is missing.
 - Caretaker contact is not a real tested flow.
@@ -217,28 +217,24 @@ Goal:
 Local mode is impressive and real.
 
 Target architecture:
-1. Core ML perception layer:
-   - Object detection.
-   - Depth.
-   - OCR.
-   - Scene context.
-2. Apple-native synthesis:
-   - Foundation Models where available.
-3. Local VLM:
-   - SmolVLM or Moondream-style model through llama.cpp / Core ML path.
+1. Cloud-first Describe:
+   - Gemini remains primary in Auto.
+2. Local Describe:
+   - Gemma 4 E2B through Google AI Edge LiteRT-LM on iPhone.
+   - Fail closed until runtime, model hash, readiness, and self-test pass.
+3. Live perception:
+   - Apple Vision/Core ML object/depth/OCR remain separate from Describe.
 4. Truthful backend display:
-   - Local: Foundation Models.
-   - Local: SmolVLM.
-   - Local: Core ML Perception.
+   - Local: Gemma 4 E2B.
    - Cloud: Gemini.
-   - Local unavailable: missing artifact/model.
+   - Local unavailable: missing runtime/model/readiness.
 
 Next tasks:
-1. Audit actual iOS assets.
-2. Decide whether to restore/build `ios\Frameworks\llama.xcframework`.
-3. Verify what model files exist and what Xcode target includes.
-4. Use current Apple/Core ML docs before implementation.
-5. Make app show exact local backend status.
+1. Link the Google AI Edge LiteRT-LM iOS runtime in Runner.
+2. Verify the pinned `.litertlm` model downloads and hash-checks on device.
+3. Run Gemma readiness/self-test on real iPhone hardware.
+4. Record first-token latency and memory behavior.
+5. Keep app status exact when local is unavailable.
 
 Do not settle for template-only as the final local story.
 
@@ -287,8 +283,8 @@ Do this next:
    - Xcode-linked files.
    - Runtime-risk files.
 3. Decide strongest local path:
-   - Restore/build llama.xcframework.
-   - Add/verify Core ML models.
+   - Link Google AI Edge LiteRT-LM for iOS.
+   - Verify Gemma 4 E2B `.litertlm` model download.
    - Wire backend status into UI.
 4. Then implement Eye image validation tests/fixes.
 
@@ -322,10 +318,10 @@ My standards:
 Your immediate task:
 Take control and continue from the current state.
 Start by auditing the local/offline iOS vision stack:
-- llama.xcframework status.
+- Gemma LiteRT-LM runtime linkage.
 - Core ML model assets.
 - Foundation Models path.
-- SmolVLM/Moondream path.
+- Gemma 4 E2B model download/hash status.
 - Xcode target linkage.
 - What is missing.
 - What is actually demoable.

@@ -27,7 +27,7 @@ class LocalVisionException implements Exception {
 /// Rejects anything that isn't plausibly a full JPEG: too small to contain a
 /// scene, missing the 0xFFD8 SOI marker, or missing the 0xFFD9 EOI marker.
 /// We intentionally keep the check cheap — heavy decoding is the native
-/// layer's job — but everything that reaches a CoreML / llama.cpp entry
+/// layer's job — but everything that reaches a native Vision or Gemma entry
 /// point must pass this gate first, since malformed bytes have segfaulted
 /// the native layer in the past.
 bool isLikelyValidJpeg(Uint8List bytes) {
@@ -50,7 +50,7 @@ LocalVisionException _malformedJpegException(int byteCount) {
 // Data models
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Results from Apple Vision framework analysis (legacy — still used by VLM path).
+/// Results from Apple Vision framework analysis used by Live/local diagnostics.
 class VisionAnalysis {
   const VisionAnalysis({
     required this.ocrTexts,
@@ -246,7 +246,7 @@ class ScenePerceptionResult extends VisionAnalysis {
 // Model status
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Status of the on-device VLM (SmolVLM2) model.
+/// Status of the on-device Gemma multimodal model.
 enum ModelStatus {
   notAvailable,
   notDownloaded,
@@ -283,7 +283,7 @@ class OfflineVisionStatus {
   final bool objectDetectionAvailable;
   final bool depthEstimationAvailable;
 
-  bool get smolVlmAvailable =>
+  bool get gemmaAvailable =>
       modelStatus == ModelStatus.loaded || modelStatus == ModelStatus.ready;
 
   bool get hasSpatialPerception =>
@@ -293,34 +293,24 @@ class OfflineVisionStatus {
       objectDetectionAvailable || depthEstimationAvailable;
 
   String get bestLocalBackendLabel {
-    if (modelStatus == ModelStatus.loaded) return 'SmolVLM2';
-    if (foundationModelsAvailable) return 'Foundation Models';
-    if (modelStatus == ModelStatus.ready) return 'SmolVLM2 ready';
+    if (modelStatus == ModelStatus.loaded) return 'Gemma 4 E2B';
+    if (modelStatus == ModelStatus.ready) return 'Gemma 4 E2B ready';
     if (hasLivePerception) return 'Local live perception';
-    return 'Apple Vision basic';
+    return 'Gemma local unavailable';
   }
 
   List<String> get missingRequirements {
     final missing = <String>[];
-    if (!foundationModelsAvailable) {
-      missing.add('Foundation Models unavailable');
-    }
     switch (modelStatus) {
       case ModelStatus.notAvailable:
-        missing.add('SmolVLM2 unavailable');
+        missing.add('Gemma runtime unavailable');
       case ModelStatus.notDownloaded:
-        missing.add('SmolVLM2 model not downloaded');
+        missing.add('Gemma 4 E2B model not downloaded');
       case ModelStatus.downloading:
-        missing.add('SmolVLM2 model still downloading');
+        missing.add('Gemma 4 E2B model still downloading');
       case ModelStatus.ready:
       case ModelStatus.loaded:
         break;
-    }
-    if (!objectDetectionAvailable) {
-      missing.add('YOLOv3Tiny model missing');
-    }
-    if (!depthEstimationAvailable) {
-      missing.add('Depth Anything model missing');
     }
     return missing;
   }
@@ -403,8 +393,8 @@ class ModelFileDownloadInfo {
   final String sha256;
 }
 
-class SmolVlmModelInfo {
-  const SmolVlmModelInfo({
+class GemmaModelInfo {
+  const GemmaModelInfo({
     required this.downloaded,
     required this.valid,
     required this.downloading,
@@ -415,7 +405,7 @@ class SmolVlmModelInfo {
     required this.files,
   });
 
-  factory SmolVlmModelInfo.fromMap(Map<dynamic, dynamic> map) {
+  factory GemmaModelInfo.fromMap(Map<dynamic, dynamic> map) {
     final rawFiles = map['files'];
     final files = rawFiles is List
         ? rawFiles
@@ -423,14 +413,14 @@ class SmolVlmModelInfo {
               .map(ModelFileDownloadInfo.fromMap)
               .toList()
         : const <ModelFileDownloadInfo>[];
-    return SmolVlmModelInfo(
+    return GemmaModelInfo(
       downloaded: map['downloaded'] as bool? ?? false,
       valid: map['valid'] as bool? ?? map['downloaded'] as bool? ?? false,
       downloading: map['downloading'] as bool? ?? false,
       sizeBytes: _asInt(map['sizeBytes']),
       requiredBytes: _asInt(map['requiredBytes']),
       path: map['path']?.toString() ?? '',
-      modelName: map['modelName']?.toString() ?? 'SmolVLM2',
+      modelName: map['modelName']?.toString() ?? 'Gemma 4 E2B',
       files: files,
     );
   }
@@ -550,8 +540,8 @@ Map<String, dynamic> _stringKeyedMap(Map<dynamic, dynamic> source) {
   });
 }
 
-class SmolVlmReadinessReport {
-  const SmolVlmReadinessReport({
+class GemmaReadinessReport {
+  const GemmaReadinessReport({
     required this.runtimeLinked,
     required this.filesPresent,
     required this.shaVerified,
@@ -570,14 +560,14 @@ class SmolVlmReadinessReport {
     required this.raw,
   });
 
-  factory SmolVlmReadinessReport.fromMap(Map<dynamic, dynamic> map) {
+  factory GemmaReadinessReport.fromMap(Map<dynamic, dynamic> map) {
     final raw = _stringKeyedMap(map);
     final sanitizedOutput =
         raw['sanitizedOutput']?.toString() ??
         raw['outputPreview']?.toString() ??
         '';
-    final base = SmolVlmReadinessReport(
-      runtimeLinked: _asBool(raw['runtimeLinked'] ?? raw['llamaLinked']),
+    final base = GemmaReadinessReport(
+      runtimeLinked: _asBool(raw['runtimeLinked'] ?? raw['liteRtLinked']),
       filesPresent: _asBool(raw['filesPresent']),
       shaVerified: _asBool(raw['shaVerified']),
       loadSuccess: _asBool(raw['loadSuccess']),
@@ -598,11 +588,11 @@ class SmolVlmReadinessReport {
     return base._enforceDartGates();
   }
 
-  factory SmolVlmReadinessReport.failed(
+  factory GemmaReadinessReport.failed(
     String failureReason, {
     Map<String, Object?> raw = const {},
   }) {
-    return SmolVlmReadinessReport.fromMap({
+    return GemmaReadinessReport.fromMap({
       ...raw,
       'runtimeLinked': raw['runtimeLinked'] ?? false,
       'filesPresent': raw['filesPresent'] ?? false,
@@ -666,10 +656,10 @@ class SmolVlmReadinessReport {
     };
   }
 
-  SmolVlmReadinessReport _enforceDartGates() {
+  GemmaReadinessReport _enforceDartGates() {
     final reason = _firstGateFailure();
     if (reason == null && passed) return this;
-    return SmolVlmReadinessReport(
+    return GemmaReadinessReport(
       runtimeLinked: runtimeLinked,
       filesPresent: filesPresent,
       shaVerified: shaVerified,
@@ -686,23 +676,23 @@ class SmolVlmReadinessReport {
       passed: false,
       failureReason: failureReason.isNotEmpty
           ? failureReason
-          : (reason ?? 'SmolVLM2 readiness probe did not pass.'),
+          : (reason ?? 'Gemma 4 E2B readiness probe did not pass.'),
       raw: raw,
     );
   }
 
   String? _firstGateFailure() {
-    if (!runtimeLinked) return 'llama runtime is not linked.';
-    if (!filesPresent) return 'SmolVLM2 model files are missing.';
+    if (!runtimeLinked) return 'LiteRT-LM runtime is not linked.';
+    if (!filesPresent) return 'Gemma 4 E2B model file is missing.';
     if (!shaVerified) {
-      return 'SmolVLM2 model files did not match expected SHA-256.';
+      return 'Gemma 4 E2B model file did not match expected SHA-256.';
     }
     if (memoryBeforeBytes < minimumMemoryBeforeBytes) {
       return 'Available memory before load is below 1.1 GB.';
     }
-    if (!loadSuccess) return 'SmolVLM2 failed to load.';
+    if (!loadSuccess) return 'Gemma 4 E2B failed to load.';
     if (loadLatencyMs <= 0 || loadLatencyMs > maximumLoadLatencyMs) {
-      return 'SmolVLM2 load exceeded the 20 second limit.';
+      return 'Gemma 4 E2B load exceeded the 20 second limit.';
     }
     if (memoryAfterLoadBytes < minimumMemoryAfterBytes ||
         memoryAfterInferenceBytes < minimumMemoryAfterBytes) {
@@ -710,16 +700,16 @@ class SmolVlmReadinessReport {
     }
     if (firstTokenLatencyMs <= 0 ||
         firstTokenLatencyMs > maximumFirstTokenLatencyMs) {
-      return 'SmolVLM2 first token exceeded the 25 second limit.';
+      return 'Gemma 4 E2B first token exceeded the 25 second limit.';
     }
     if (totalLatencyMs <= 0 || totalLatencyMs > maximumTotalLatencyMs) {
-      return 'SmolVLM2 self-test exceeded the 45 second limit.';
+      return 'Gemma 4 E2B self-test exceeded the 45 second limit.';
     }
     if (tokenCount <= 0 || !_hasUsefulSpokenOutput(sanitizedOutput)) {
-      return 'SmolVLM2 output did not pass spoken quality checks.';
+      return 'Gemma 4 E2B output did not pass spoken quality checks.';
     }
     if (_asBool(raw['memoryWarningDuringProbe'])) {
-      return 'iOS reported memory pressure during the SmolVLM2 probe.';
+      return 'iOS reported memory pressure during the Gemma 4 E2B probe.';
     }
     return null;
   }
@@ -732,7 +722,7 @@ class SmolVlmReadinessReport {
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.isEmpty) return false;
     final words = RegExp(r"[A-Za-z0-9']+").allMatches(normalized).length;
-    // Relaxed from 8 → 4. SmolVLM2 probes on arbitrary scenes commonly yield
+    // Relaxed from 8 → 4. Gemma 4 E2B probes on arbitrary scenes commonly yield
     // tight outputs like "A dim hallway." which should count as "model
     // produced coherent English" — downstream combine-with-template handles
     // the rest.
@@ -741,7 +731,7 @@ class SmolVlmReadinessReport {
     // EOS mid-sentence and produce otherwise-valid output without a period.
     final lower = normalized.toLowerCase();
     if (RegExp(
-      r'\b(smolvlm|llama|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b',
+      r'\b(gemma|litert|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b',
     ).hasMatch(lower)) {
       return false;
     }
@@ -793,16 +783,15 @@ List<Map<String, double>> _asRectList(Object? value) {
 /// Handles all three pipeline layers exposed by OnDeviceVisionChannel.swift.
 class OnDeviceVisionService {
   static const _method = MethodChannel('com.ican/on_device_vision');
-  static const _vlmStream = EventChannel('com.ican/vlm_stream');
-  static const _fmStream = EventChannel('com.ican/fm_stream');
+  static const _gemmaStream = EventChannel('com.ican/gemma_stream');
   static const _downloadStream = EventChannel(
     'com.ican/model_download_progress',
   );
   static const _firstNativeTokenTimeout = Duration(seconds: 120);
-  static const _readinessPrefsKey = 'smol_vlm_readiness_capability_v1';
-  static const _lastReadinessPrefsKey = 'smol_vlm_readiness_last_report_v1';
+  static const _readinessPrefsKey = 'gemma_litert_readiness_capability_v1';
+  static const _lastReadinessPrefsKey = 'gemma_litert_readiness_last_report_v1';
   // Timestamped so a one-off probe failure (e.g. dark image yielding a very
-  // short SmolVLM caption) doesn't permanently disable SmolVLM for the
+  // short Gemma caption) doesn't permanently disable Gemma for the
   // session. Past failures are ignored once older than this TTL.
   static const _readinessFailureTtl = Duration(minutes: 10);
   static final Map<String, DateTime> _failedReadinessKeys =
@@ -810,7 +799,7 @@ class OnDeviceVisionService {
 
   /// Clears the in-memory readiness-failure cache. Useful when the user has
   /// taken corrective action (re-downloaded the model, moved to a well-lit
-  /// scene) and wants SmolVLM2 to be tried again before the TTL expires.
+  /// scene) and wants Gemma 4 E2B to be tried again before the TTL expires.
   static void clearReadinessFailureCache() {
     _failedReadinessKeys.clear();
   }
@@ -1104,14 +1093,7 @@ class OnDeviceVisionService {
 
   /// Returns true if Apple Foundation Models is available on this device (iOS 26+).
   Future<bool> isFoundationModelsAvailable() async {
-    try {
-      final result = await _method.invokeMethod<bool>(
-        'isFoundationModelsAvailable',
-      );
-      return result ?? false;
-    } catch (_) {
-      return false;
-    }
+    return false;
   }
 
   /// Reason code describing the current Foundation Models availability. Useful
@@ -1120,14 +1102,7 @@ class OnDeviceVisionService {
   /// 'available', 'appleIntelligenceDisabled', 'deviceNotEligible',
   /// 'modelDownloading', 'iosTooOld', 'frameworkMissing', 'unknown'.
   Future<String> foundationModelsAvailabilityReason() async {
-    try {
-      final result = await _method.invokeMethod<String>(
-        'foundationModelsAvailabilityReason',
-      );
-      return result ?? 'unknown';
-    } catch (_) {
-      return 'unknown';
-    }
+    return 'disabledForGemma';
   }
 
   /// Synthesize a scene description using Apple Foundation Models.
@@ -1136,43 +1111,42 @@ class OnDeviceVisionService {
     String context, {
     required String systemPrompt,
   }) {
-    return _invokeTokenStream(
-      channel: _fmStream,
-      method: 'synthesizeDescription',
-      arguments: {'context': context, 'systemPrompt': systemPrompt},
-      localCode: 'Local L30',
-      stageLabel: 'Foundation Models',
+    return Stream<String>.error(
+      const LocalVisionException(
+        'Local L30',
+        'Apple Foundation Models are disabled; use Gemma local describe.',
+      ),
     );
   }
 
-  // ── Layer 2: SmolVLM2 ───────────────────────────────────────────────────
+  // ── Layer 2: Gemma 4 E2B ───────────────────────────────────────────────────
 
   Future<ModelStatus> getModelStatus() async {
     try {
-      final raw = await _method.invokeMethod<String>('getModelStatus');
+      final raw = await _method.invokeMethod<String>('getGemmaStatus');
       return _parseModelStatus(raw ?? 'not_downloaded');
     } catch (_) {
       return ModelStatus.notDownloaded;
     }
   }
 
-  Future<bool> loadVlmModel() async {
+  Future<bool> loadGemmaModel() async {
     try {
-      final result = await _method.invokeMethod<bool>('loadModel');
+      final result = await _method.invokeMethod<bool>('loadGemmaModel');
       return result ?? false;
     } catch (e) {
-      debugPrint('[OnDeviceVision] Failed to load VLM: $e');
+      debugPrint('[OnDeviceVision] Failed to load Gemma: $e');
       return false;
     }
   }
 
-  Future<bool> isSmolVlmReadyForDescribe(
+  Future<bool> isGemmaReadyForDescribe(
     Uint8List jpegBytes, {
     String systemPrompt =
         'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
   }) async {
-    final context = await _getSmolVlmReadinessContext();
-    final cacheKey = _smolVlmReadinessCacheKey(context);
+    final context = await getGemmaReadinessContext();
+    final cacheKey = _gemmaReadinessCacheKey(context);
     final failedAt = _failedReadinessKeys[cacheKey];
     if (failedAt != null &&
         DateTime.now().difference(failedAt) < _readinessFailureTtl) {
@@ -1183,10 +1157,10 @@ class OnDeviceVisionService {
       _failedReadinessKeys.remove(cacheKey);
     }
 
-    final cached = await _loadCachedSmolVlmReadiness(cacheKey);
+    final cached = await _loadCachedGemmaReadiness(cacheKey);
     if (cached != null && cached.passed) return true;
 
-    final report = await runSmolVlmReadinessProbe(
+    final report = await runGemmaReadinessProbe(
       jpegBytes,
       systemPrompt: systemPrompt,
       context: context,
@@ -1195,18 +1169,18 @@ class OnDeviceVisionService {
     return report.passed;
   }
 
-  Future<SmolVlmReadinessReport> runSmolVlmReadinessProbe(
+  Future<GemmaReadinessReport> runGemmaReadinessProbe(
     Uint8List jpegBytes, {
     String systemPrompt =
         'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
     Map<String, dynamic>? context,
     String? cacheKey,
   }) async {
-    final readinessContext = context ?? await _getSmolVlmReadinessContext();
-    final key = cacheKey ?? _smolVlmReadinessCacheKey(readinessContext);
+    final readinessContext = context ?? await getGemmaReadinessContext();
+    final key = cacheKey ?? _gemmaReadinessCacheKey(readinessContext);
 
     if (!isLikelyValidJpeg(jpegBytes)) {
-      final report = SmolVlmReadinessReport.failed(
+      final report = GemmaReadinessReport.failed(
         'Readiness probe image is corrupt or incomplete.',
         raw: {
           ...readinessContext,
@@ -1214,49 +1188,49 @@ class OnDeviceVisionService {
           'runtimeLinked': readinessContext['runtimeLinked'] ?? false,
         },
       );
-      await _storeSmolVlmReadinessReport(key, report);
+      await _storeGemmaReadinessReport(key, report);
       return report;
     }
 
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
-        'runSmolVlmReadinessProbe',
+        'runGemmaReadinessProbe',
         {'imageBytes': jpegBytes, 'systemPrompt': systemPrompt},
       );
-      final report = SmolVlmReadinessReport.fromMap({
+      final report = GemmaReadinessReport.fromMap({
         ...readinessContext,
         ...?result,
       });
-      await _storeSmolVlmReadinessReport(key, report);
+      await _storeGemmaReadinessReport(key, report);
       return report;
     } on MissingPluginException {
-      final report = SmolVlmReadinessReport.failed(
+      final report = GemmaReadinessReport.failed(
         'Native vision channel is not registered.',
         raw: {...readinessContext, 'runtimeLinked': false},
       );
-      await _storeSmolVlmReadinessReport(key, report);
+      await _storeGemmaReadinessReport(key, report);
       return report;
     } on PlatformException catch (e) {
-      final report = SmolVlmReadinessReport.failed(
+      final report = GemmaReadinessReport.failed(
         _platformDetail(e),
         raw: {...readinessContext, 'runtimeLinked': false},
       );
-      await _storeSmolVlmReadinessReport(key, report);
+      await _storeGemmaReadinessReport(key, report);
       return report;
     } catch (e) {
-      final report = SmolVlmReadinessReport.failed(
+      final report = GemmaReadinessReport.failed(
         e.toString(),
         raw: readinessContext,
       );
-      await _storeSmolVlmReadinessReport(key, report);
+      await _storeGemmaReadinessReport(key, report);
       return report;
     }
   }
 
-  Future<String> getSmolVlmReadinessSupportSnapshot() async {
-    final context = await _getSmolVlmReadinessContext();
-    final cacheKey = _smolVlmReadinessCacheKey(context);
-    final cached = await _loadCachedSmolVlmReadiness(cacheKey);
+  Future<String> getGemmaReadinessSupportSnapshot() async {
+    final context = await getGemmaReadinessContext();
+    final cacheKey = _gemmaReadinessCacheKey(context);
+    final cached = await _loadCachedGemmaReadiness(cacheKey);
     final payload = <String, dynamic>{
       'cacheKey': cacheKey,
       'context': context,
@@ -1264,7 +1238,7 @@ class OnDeviceVisionService {
           cached?.toJson() ??
           {
             'passed': false,
-            'failureReason': 'No cached SmolVLM2 readiness probe report.',
+            'failureReason': 'No cached Gemma 4 E2B readiness probe report.',
           },
     };
     return const JsonEncoder.withIndent(
@@ -1272,16 +1246,16 @@ class OnDeviceVisionService {
     ).convert(_redactLocalPaths(payload));
   }
 
-  Future<void> unloadVlmModel() async {
+  Future<void> unloadGemmaModel() async {
     try {
-      await _method.invokeMethod<bool>('unloadModel');
+      await _method.invokeMethod<bool>('unloadGemmaModel');
     } catch (e) {
-      debugPrint('[OnDeviceVision] Failed to unload VLM: $e');
+      debugPrint('[OnDeviceVision] Failed to unload Gemma: $e');
     }
   }
 
-  /// Run VLM inference and stream tokens back.
-  Stream<String> describeWithVlm(
+  /// Run Gemma image-to-text inference and stream tokens back.
+  Stream<String> describeWithGemma(
     Uint8List jpegBytes, {
     required String systemPrompt,
     String? visionContext,
@@ -1290,15 +1264,15 @@ class OnDeviceVisionService {
       return Stream<String>.error(_malformedJpegException(jpegBytes.length));
     }
     return _invokeTokenStream(
-      channel: _vlmStream,
-      method: 'describeImage',
+      channel: _gemmaStream,
+      method: 'describeImageWithGemma',
       arguments: {
         'imageBytes': jpegBytes,
         'systemPrompt': systemPrompt,
         'visionContext': visionContext,
       },
       localCode: 'Local L20',
-      stageLabel: 'SmolVLM2',
+      stageLabel: 'Gemma 4 E2B',
     );
   }
 
@@ -1317,7 +1291,7 @@ class OnDeviceVisionService {
         );
 
         try {
-          await _method.invokeMethod<bool>('downloadModel');
+          await _method.invokeMethod<bool>('downloadGemmaModel');
         } on PlatformException catch (e, stackTrace) {
           debugPrint('[OnDeviceVision] Download error: ${e.message}');
           await progressSub?.cancel();
@@ -1335,13 +1309,13 @@ class OnDeviceVisionService {
 
   Future<void> cancelModelDownload() async {
     try {
-      await _method.invokeMethod<bool>('cancelDownload');
+      await _method.invokeMethod<bool>('cancelGemmaDownload');
     } catch (_) {}
   }
 
   Future<bool> deleteModel() async {
     try {
-      final result = await _method.invokeMethod<bool>('deleteModel');
+      final result = await _method.invokeMethod<bool>('deleteGemmaModel');
       return result ?? false;
     } catch (_) {
       return false;
@@ -1351,7 +1325,7 @@ class OnDeviceVisionService {
   Future<Map<String, dynamic>> getModelInfo() async {
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
-        'getModelInfo',
+        'getGemmaModelInfo',
       );
       return result?.map((k, v) => MapEntry(k.toString(), v)) ?? {};
     } catch (_) {
@@ -1359,58 +1333,58 @@ class OnDeviceVisionService {
     }
   }
 
-  Future<SmolVlmModelInfo> getSmolVlmModelInfo() async {
+  Future<GemmaModelInfo> getGemmaModelInfo() async {
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
-        'getModelInfo',
+        'getGemmaModelInfo',
       );
-      return SmolVlmModelInfo.fromMap(result ?? const {});
+      return GemmaModelInfo.fromMap(result ?? const {});
     } catch (_) {
-      return const SmolVlmModelInfo(
+      return const GemmaModelInfo(
         downloaded: false,
         valid: false,
         downloading: false,
         sizeBytes: 0,
         requiredBytes: 0,
         path: '',
-        modelName: 'SmolVLM2',
+        modelName: 'Gemma 4 E2B',
         files: [],
       );
     }
   }
 
-  Future<Map<String, dynamic>> runSmolVlmSelfTest(
+  Future<Map<String, dynamic>> runGemmaSelfTest(
     Uint8List jpegBytes, {
     String systemPrompt =
         'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
   }) async {
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
-        'runSmolVlmSelfTest',
+        'runGemmaSelfTest',
         {'imageBytes': jpegBytes, 'systemPrompt': systemPrompt},
       );
       return _stringKeyedMap(result ?? const {});
     } on MissingPluginException {
       return {
-        'llamaLinked': false,
+        'liteRtLinked': false,
         'loadSuccess': false,
         'error': 'Native vision channel is not registered.',
       };
     } on PlatformException catch (e) {
       return {
-        'llamaLinked': false,
+        'liteRtLinked': false,
         'loadSuccess': false,
         'error': _platformDetail(e),
       };
     } catch (e) {
-      return {'llamaLinked': false, 'loadSuccess': false, 'error': '$e'};
+      return {'liteRtLinked': false, 'loadSuccess': false, 'error': '$e'};
     }
   }
 
-  Future<Map<String, dynamic>> _getSmolVlmReadinessContext() async {
+  Future<Map<String, dynamic>> getGemmaReadinessContext() async {
     try {
       final result = await _method.invokeMethod<Map<dynamic, dynamic>>(
-        'getSmolVlmReadinessContext',
+        'getGemmaReadinessContext',
       );
       return _stringKeyedMap(result ?? const {});
     } on MissingPluginException {
@@ -1423,7 +1397,7 @@ class OnDeviceVisionService {
     }
   }
 
-  String _smolVlmReadinessCacheKey(Map<String, dynamic> context) {
+  String _gemmaReadinessCacheKey(Map<String, dynamic> context) {
     final files = context['files'] is List
         ? context['files'] as List
         : const [];
@@ -1446,7 +1420,7 @@ class OnDeviceVisionService {
     ].join('::');
   }
 
-  Future<SmolVlmReadinessReport?> _loadCachedSmolVlmReadiness(
+  Future<GemmaReadinessReport?> _loadCachedGemmaReadiness(
     String cacheKey,
   ) async {
     try {
@@ -1457,15 +1431,15 @@ class OnDeviceVisionService {
       if (decoded is! Map || decoded['cacheKey'] != cacheKey) return null;
       final reportMap = decoded['report'];
       if (reportMap is! Map) return null;
-      return SmolVlmReadinessReport.fromMap(reportMap);
+      return GemmaReadinessReport.fromMap(reportMap);
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> _storeSmolVlmReadinessReport(
+  Future<void> _storeGemmaReadinessReport(
     String cacheKey,
-    SmolVlmReadinessReport report,
+    GemmaReadinessReport report,
   ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1485,7 +1459,7 @@ class OnDeviceVisionService {
         await prefs.remove(_readinessPrefsKey);
       }
     } catch (e) {
-      debugPrint('[OnDeviceVision] Failed to store SmolVLM readiness: $e');
+      debugPrint('[OnDeviceVision] Failed to store Gemma readiness: $e');
     }
   }
 

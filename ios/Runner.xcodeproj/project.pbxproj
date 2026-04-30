@@ -18,9 +18,9 @@
 		AA000102000000000A010000 /* OnDeviceVisionChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A010000 /* OnDeviceVisionChannel.swift */; };
 		AA000102000000000A011000 /* AudioPlaybackChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A011000 /* AudioPlaybackChannel.swift */; };
 		AA000102000000000A012000 /* LiveXChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A012000 /* LiveXChannel.swift */; };
-		AA000102000000000A020000 /* LlamaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A020000 /* LlamaService.swift */; };
+		AA000102000000000A020000 /* GemmaLiteRtService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A020000 /* GemmaLiteRtService.swift */; };
 		AA000102000000000A030000 /* VisionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A030000 /* VisionService.swift */; };
-		AA000102000000000A040000 /* ModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A040000 /* ModelDownloadManager.swift */; };
+		AA000102000000000A040000 /* GemmaModelDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A040000 /* GemmaModelDownloadManager.swift */; };
 		AA000102000000000A050000 /* DepthEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A050000 /* DepthEstimator.swift */; };
 		AA000102000000000A060000 /* FoundationModelSynthesizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A060000 /* FoundationModelSynthesizer.swift */; };
 		AA000102000000000A080000 /* ObjectDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A080000 /* ObjectDetector.swift */; };
@@ -28,9 +28,7 @@
 		AA000102000000000A0A0000 /* SceneContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A0A0000 /* SceneContext.swift */; };
 		AA000102000000000A0B0000 /* WiFiStreamReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000101000000000A0B0000 /* WiFiStreamReceiver.swift */; };
 		CC000102000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = CC000101000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage */; };
-		CC000102000000000E001000 /* YOLOv3Tiny.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */; };
-		DD00010200000000F0010000 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = DD00010100000000F0010000 /* llama.xcframework */; };
-/* End PBXBuildFile section */
+		CC000102000000000E001000 /* YOLOv3Tiny.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */; };/* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		331C8085294A63A400263BE5 /* PBXContainerItemProxy */ = {
@@ -75,9 +73,9 @@
 		AA000101000000000A010000 /* OnDeviceVisionChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceVisionChannel.swift; sourceTree = "<group>"; };
 		AA000101000000000A011000 /* AudioPlaybackChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlaybackChannel.swift; sourceTree = "<group>"; };
 		AA000101000000000A012000 /* LiveXChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveXChannel.swift; sourceTree = "<group>"; };
-		AA000101000000000A020000 /* LlamaService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaService.swift; sourceTree = "<group>"; };
+		AA000101000000000A020000 /* GemmaLiteRtService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaLiteRtService.swift; sourceTree = "<group>"; };
 		AA000101000000000A030000 /* VisionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionService.swift; sourceTree = "<group>"; };
-		AA000101000000000A040000 /* ModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadManager.swift; sourceTree = "<group>"; };
+		AA000101000000000A040000 /* GemmaModelDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaModelDownloadManager.swift; sourceTree = "<group>"; };
 		AA000101000000000A050000 /* DepthEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthEstimator.swift; sourceTree = "<group>"; };
 		AA000101000000000A060000 /* FoundationModelSynthesizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoundationModelSynthesizer.swift; sourceTree = "<group>"; };
 		AA000101000000000A080000 /* ObjectDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObjectDetector.swift; sourceTree = "<group>"; };
@@ -85,17 +83,13 @@
 		AA000101000000000A0A0000 /* SceneContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneContext.swift; sourceTree = "<group>"; };
 		AA000101000000000A0B0000 /* WiFiStreamReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WiFiStreamReceiver.swift; sourceTree = "<group>"; };
 		CC000101000000000D001000 /* DepthAnythingV2SmallF16P6.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlpackage; path = Models/DepthAnythingV2SmallF16P6.mlpackage; sourceTree = "<group>"; };
-		CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = Models/YOLOv3Tiny.mlmodel; sourceTree = "<group>"; };
-		DD00010100000000F0010000 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = llama.xcframework; sourceTree = "<group>"; };
-/* End PBXFileReference section */
+		CC000101000000000E001000 /* YOLOv3Tiny.mlmodel */ = {isa = PBXFileReference; lastKnownFileType = file.mlmodel; path = Models/YOLOv3Tiny.mlmodel; sourceTree = "<group>"; };/* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		97C146EB1CF9000F007C117D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
-				DD00010200000000F0010000 /* llama.xcframework in Frameworks */,
-			);
+			files = (			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -154,9 +148,9 @@
 				AA000101000000000A010000 /* OnDeviceVisionChannel.swift */,
 				AA000101000000000A011000 /* AudioPlaybackChannel.swift */,
 				AA000101000000000A012000 /* LiveXChannel.swift */,
-				AA000101000000000A020000 /* LlamaService.swift */,
+				AA000101000000000A020000 /* GemmaLiteRtService.swift */,
 				AA000101000000000A030000 /* VisionService.swift */,
-				AA000101000000000A040000 /* ModelDownloadManager.swift */,
+				AA000101000000000A040000 /* GemmaModelDownloadManager.swift */,
 				AA00010300000000AAAA0000 /* EyePipeline */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -180,9 +174,7 @@
 		};
 		DD00010300000000F0010000 /* Frameworks */ = {
 			isa = PBXGroup;
-			children = (
-				DD00010100000000F0010000 /* llama.xcframework */,
-			);
+			children = (			);
 			path = Frameworks;
 			sourceTree = "<group>";
 		};
@@ -341,9 +333,9 @@
 				AA000102000000000A010000 /* OnDeviceVisionChannel.swift in Sources */,
 				AA000102000000000A011000 /* AudioPlaybackChannel.swift in Sources */,
 				AA000102000000000A012000 /* LiveXChannel.swift in Sources */,
-				AA000102000000000A020000 /* LlamaService.swift in Sources */,
+				AA000102000000000A020000 /* GemmaLiteRtService.swift in Sources */,
 				AA000102000000000A030000 /* VisionService.swift in Sources */,
-				AA000102000000000A040000 /* ModelDownloadManager.swift in Sources */,
+				AA000102000000000A040000 /* GemmaModelDownloadManager.swift in Sources */,
 				AA000102000000000A050000 /* DepthEstimator.swift in Sources */,
 				AA000102000000000A060000 /* FoundationModelSynthesizer.swift in Sources */,
 				AA000102000000000A080000 /* ObjectDetector.swift in Sources */,
