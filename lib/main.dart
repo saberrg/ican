@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:provider/provider.dart';
+
 import 'core/router.dart';
 import 'core/theme.dart';
 import 'models/settings_provider.dart';
@@ -105,14 +107,21 @@ class ICanApp extends StatelessWidget {
     return ScreenUtilInit(
       designSize: const Size(375, 812),
       minTextAdapt: true,
-      builder: (context, child) => MaterialApp.router(
-        title: 'iCan',
-        debugShowCheckedModeBanner: false,
-        theme: ICanTheme.lightTheme,
-        darkTheme: ICanTheme.darkTheme,
-        themeMode: ThemeMode.system,
-        routerConfig: _router,
-      ),
+      // Expose the app-wide SettingsProvider above the router so every route
+      // (Home, Settings, Live Detection) can read/write it without each route
+      // having to re-scope its own provider.
+      builder: (context, child) =>
+          ChangeNotifierProvider<SettingsProvider>.value(
+            value: appSettingsProvider,
+            child: MaterialApp.router(
+              title: 'iCan',
+              debugShowCheckedModeBanner: false,
+              theme: ICanTheme.lightTheme,
+              darkTheme: ICanTheme.darkTheme,
+              themeMode: ThemeMode.system,
+              routerConfig: _router,
+            ),
+          ),
     );
   }
 }
