@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'package:go_router/go_router.dart';
 
+import '../core/route_constants.dart';
 import '../core/theme.dart';
 import '../models/font_scale.dart';
 import '../models/settings_provider.dart';
@@ -56,25 +57,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
           policy: OrderedTraversalPolicy(),
           child: CustomScrollView(
             slivers: [
-              // ── Title ──
+              // ── Title + back button ──
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.sm,
-                    AppSpacing.md,
+                    AppSpacing.xs,
+                    AppSpacing.xs,
                     AppSpacing.sm,
                     0,
                   ),
-                  child: Semantics(
-                    header: true,
-                    child: Text(
-                      'Settings',
-                      style: TextStyle(
-                        fontSize: 28.sp,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textOnLight,
+                  child: Row(
+                    children: [
+                      Semantics(
+                        button: true,
+                        label: 'Back',
+                        child: IconButton(
+                          icon: const Icon(Icons.arrow_back_rounded),
+                          color: AppColors.textOnLight,
+                          tooltip: 'Back',
+                          onPressed: () {
+                            if (context.canPop()) {
+                              context.pop();
+                            } else {
+                              context.goNamed(Routes.homeName);
+                            }
+                          },
+                        ),
                       ),
-                    ),
+                      Expanded(
+                        child: Semantics(
+                          header: true,
+                          child: Text(
+                            'Settings',
+                            style: TextStyle(
+                              fontSize: 28.sp,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.textOnLight,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

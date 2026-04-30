@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/route_constants.dart';
 import '../core/theme.dart';
 import '../main.dart' show voiceCommandService;
 import '../models/home_view_model.dart';
@@ -154,30 +156,49 @@ class _HomeHeader extends StatelessWidget {
     return Semantics(
       header: true,
       label: 'iCan Eye command center',
-      child: ExcludeSemantics(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'iCan Eye',
-              style: TextStyle(
-                fontSize: 32.sp,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textOnLight,
-                height: 1.1,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ExcludeSemantics(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'iCan Eye',
+                    style: TextStyle(
+                      fontSize: 32.sp,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textOnLight,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Command center for Describe, Eye readiness, and voice tuning.',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      color: AppColors.textSecondaryOnLight,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Command center for Describe, Eye readiness, and voice tuning.',
-              style: TextStyle(
-                fontSize: 16.sp,
-                color: AppColors.textSecondaryOnLight,
-                height: 1.35,
-              ),
+          ),
+          Semantics(
+            button: true,
+            label: 'Settings',
+            hint: 'Opens app settings including Live cloud policy',
+            child: IconButton(
+              icon: const Icon(Icons.settings_rounded),
+              color: AppColors.textOnLight,
+              iconSize: 28,
+              tooltip: 'Settings',
+              onPressed: () => context.pushNamed(Routes.settingsName),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

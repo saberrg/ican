@@ -11,6 +11,7 @@ import '../screens/caretaker_dashboard_screen.dart';
 import '../screens/connection_error_screen.dart';
 import '../screens/device_pairing_screen.dart';
 import '../screens/role_selection_screen.dart';
+import '../screens/settings_screen.dart';
 import '../screens/splash_screen.dart';
 import '../screens/vision_diagnostic_screen.dart';
 import '../services/on_device_vision_service.dart';
@@ -84,6 +85,15 @@ GoRouter buildRouter() {
           state: state,
           name: Routes.caretakerDashboardName,
           child: const CaretakerDashboardScreen(),
+        ),
+      ),
+      GoRoute(
+        path: Routes.settings,
+        name: Routes.settingsName,
+        pageBuilder: (context, state) => _buildPage(
+          state: state,
+          name: Routes.settingsName,
+          child: const SettingsScreen(),
         ),
       ),
       GoRoute(
