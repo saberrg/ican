@@ -4,6 +4,11 @@ Use the hidden Vision Diagnostic screen to test each backend in isolation.
 
 Access: Settings > About > long-press the Version row.
 
+The diagnostic screen can use a phone photo instead of an iCan Eye capture:
+tap Pick Test Photo, choose an image from Photos, then run diagnostics. The
+Gemma readiness probe will use that selected image until another image is
+chosen or the screen is rebuilt.
+
 ## Describe Backends
 
 ### 1. Cloud Gemini

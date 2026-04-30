@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as image_codec;
+import 'package:image_picker/image_picker.dart';
 
 import '../core/theme.dart';
 import '../services/ble_service.dart';
@@ -9,9 +12,14 @@ import '../services/on_device_vision_service.dart';
 import '../widgets/accessible_button.dart';
 
 class VisionDiagnosticScreen extends StatefulWidget {
-  const VisionDiagnosticScreen({super.key, this.onDeviceService});
+  const VisionDiagnosticScreen({
+    super.key,
+    this.onDeviceService,
+    this.pickTestImageBytes,
+  });
 
   final OnDeviceVisionService? onDeviceService;
+  final Future<Uint8List?> Function()? pickTestImageBytes;
 
   @override
   State<VisionDiagnosticScreen> createState() => _VisionDiagnosticScreenState();
@@ -30,6 +38,28 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   String _downloadPhase = '';
   String? _downloadError;
   bool _loading = false;
+  bool _pickingPhoto = false;
+  Uint8List? _selectedTestImageBytes;
+  String? _testImageStatus;
+
+  static final Uint8List _gemmaProbeJpegBytes = Uint8List.fromList(
+    base64Decode(
+      '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoH'
+      'BwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQME'
+      'BAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU'
+      'FBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQE'
+      'AAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRB'
+      'RIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3'
+      'ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJW'
+      'Wl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5u'
+      'fo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL'
+      '/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRob'
+      'HBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYW'
+      'VpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0'
+      'tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADA'
+      'MBAAIRAxEAPwD9U6KKKAP/2Q==',
+    ),
+  );
 
   @override
   void initState() {
@@ -93,20 +123,31 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       final appleVision = nativeReady && await _vision.isAppleVisionAvailable();
       final offline = await _vision.getOfflineVisionStatus();
       final nativeModels = await _vision.getOfflineVisionDiagnostics();
-      final readinessSnapshot = await _vision
-          .getGemmaReadinessSupportSnapshot();
       var gemmaLoad = 'skipped';
+      GemmaReadinessReport? readinessReport;
+      final probeImage = _selectedTestImageBytes ?? _gemmaProbeJpegBytes;
       if (offline.modelStatus == ModelStatus.loaded) {
         gemmaLoad = 'already loaded';
       } else if (offline.modelStatus == ModelStatus.ready) {
         final loaded = await _vision.loadGemmaModel();
         gemmaLoad = loaded ? 'loaded successfully' : 'load failed';
       }
+      if (offline.modelStatus == ModelStatus.ready ||
+          offline.modelStatus == ModelStatus.loaded) {
+        readinessReport = await _vision.runGemmaReadinessProbe(probeImage);
+      }
+      final readinessSnapshot = await _vision
+          .getGemmaReadinessSupportSnapshot();
       lines.addAll([
         'Native channel: ${nativeReady ? 'ready' : 'unavailable'}',
         'Apple Vision: ${appleVision ? 'ready' : 'unavailable'}',
         'Gemma 4 E2B status: ${_modelStatusLabel(offline.modelStatus)}',
         'Gemma 4 E2B load: $gemmaLoad',
+        'Gemma probe image: ${_selectedTestImageBytes == null ? 'built-in test JPEG' : 'selected phone photo (${_selectedTestImageBytes!.length} bytes)'}',
+        if (readinessReport != null)
+          'Gemma 4 E2B readiness probe: ${readinessReport.passed ? 'passed' : 'failed'}',
+        if (readinessReport != null && !readinessReport.passed)
+          'Gemma 4 E2B failure reason: ${readinessReport.failureReason}',
         'Best local backend: ${offline.bestLocalBackendLabel}',
         'YOLOv3 Tiny: ${offline.objectDetectionAvailable ? 'ready' : 'unavailable'}',
         'Depth Anything: ${offline.depthEstimationAvailable ? 'ready' : 'unavailable'}',
@@ -195,14 +236,68 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
 
   Future<void> _loadModelNow() async {
     setState(() => _loading = true);
+    var loaded = false;
     try {
-      await _vision.loadGemmaModel();
+      loaded = await _vision.loadGemmaModel();
     } catch (_) {
       // loadGemmaModel already handles its own errors and returns false.
     }
     if (!mounted) return;
-    setState(() => _loading = false);
+    setState(() {
+      _loading = false;
+      _downloadPhase = loaded
+          ? 'Gemma 4 E2B loaded.'
+          : 'Gemma 4 E2B load failed. Run Diagnostics for details.';
+    });
     await _refreshQuickStatus();
+  }
+
+  Future<void> _pickTestPhoto() async {
+    if (_pickingPhoto) return;
+    setState(() {
+      _pickingPhoto = true;
+      _testImageStatus = 'Opening photo library...';
+    });
+
+    try {
+      final bytes = await (widget.pickTestImageBytes ?? _pickGalleryJpeg)();
+      if (!mounted) return;
+      if (bytes == null) {
+        setState(() {
+          _pickingPhoto = false;
+          _testImageStatus = 'No test photo selected.';
+        });
+        return;
+      }
+      setState(() {
+        _pickingPhoto = false;
+        _selectedTestImageBytes = bytes;
+        _testImageStatus = 'Selected phone photo (${bytes.length} bytes).';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _pickingPhoto = false;
+        _testImageStatus = 'Photo selection failed: $e';
+      });
+    }
+  }
+
+  Future<Uint8List?> _pickGalleryJpeg() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 92,
+    );
+    if (picked == null) return null;
+
+    final bytes = await picked.readAsBytes();
+    if (isLikelyValidJpeg(bytes)) return bytes;
+
+    final decoded = image_codec.decodeImage(bytes);
+    if (decoded == null) {
+      throw const FormatException('Selected image could not be decoded.');
+    }
+    return Uint8List.fromList(image_codec.encodeJpg(decoded, quality: 92));
   }
 
   Future<void> _retryReadiness() async {
@@ -334,6 +429,27 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
             'Status: ${_modelStatusLabel(_modelStatus)}',
             style: const TextStyle(color: AppColors.textSecondaryOnLight),
           ),
+          const SizedBox(height: AppSpacing.xs),
+          AccessibleButton(
+            label: _pickingPhoto ? 'Opening Photos...' : 'Pick Test Photo',
+            hint:
+                'Selects a phone photo for Gemma diagnostics without using the Eye camera',
+            onPressed: _pickingPhoto ? null : _pickTestPhoto,
+          ),
+          if (_testImageStatus != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _testImageStatus!,
+              style: const TextStyle(color: AppColors.textSecondaryOnLight),
+            ),
+          ],
+          if (!isDownloading && _downloadPhase.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _downloadPhase,
+              style: const TextStyle(color: AppColors.textSecondaryOnLight),
+            ),
+          ],
           if (isDownloading) ...[
             const SizedBox(height: AppSpacing.xs),
             LinearProgressIndicator(value: _downloadProgress),
@@ -351,7 +467,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
           ] else if (_modelStatus == ModelStatus.notDownloaded) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'About 1.6 GB. Wi-Fi recommended.',
+              'About 2.6 GB. Wi-Fi recommended.',
               style: const TextStyle(color: AppColors.textSecondaryOnLight),
             ),
             const SizedBox(height: AppSpacing.xs),

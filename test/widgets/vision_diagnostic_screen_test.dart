@@ -71,6 +71,14 @@ void main() {
       find.textContaining('Gemma 4 E2B load: loaded successfully'),
       findsOneWidget,
     );
+    expect(
+      find.textContaining('Gemma 4 E2B readiness probe: failed'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Gemma 4 E2B failure reason: Probe failed.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('YOLOv3 Tiny: ready'), findsOneWidget);
     expect(find.textContaining('Depth Anything: unavailable'), findsOneWidget);
 
@@ -80,9 +88,75 @@ void main() {
     expect(clipboardText, contains('iCan Eye diagnostics'));
     expect(clipboardText, contains('Image quality: dim,low_contrast'));
     expect(clipboardText, contains('Gemma 4 E2B load: loaded successfully'));
+    expect(clipboardText, contains('Gemma 4 E2B readiness probe: failed'));
+    expect(
+      clipboardText,
+      contains('Gemma 4 E2B failure reason: Probe failed.'),
+    );
     expect(clipboardText, contains('Gemma 4 E2B readiness snapshot'));
     expect(clipboardText, contains('"passed": false'));
     expect(clipboardText, contains('YOLOv3 Tiny: ready'));
+  });
+
+  testWidgets('Load Gemma button surfaces load failure', (tester) async {
+    final onDevice = _FakeOnDeviceVisionService(loadResult: false);
+
+    await tester.pumpWidget(
+      _buildTestApp(VisionDiagnosticScreen(onDeviceService: onDevice)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Load Gemma 4 E2B now'));
+    await tester.pump();
+    await tester.tap(find.text('Load Gemma 4 E2B now'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Gemma 4 E2B load failed. Run Diagnostics for details.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('picked phone photo is used for Gemma readiness probe', (
+    tester,
+  ) async {
+    final onDevice = _FakeOnDeviceVisionService();
+    final selectedPhotoBytes = Uint8List.fromList([
+      0xff,
+      0xd8,
+      ...List<int>.filled(2044, 0x42),
+      0xff,
+      0xd9,
+    ]);
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        VisionDiagnosticScreen(
+          onDeviceService: onDevice,
+          pickTestImageBytes: () async => selectedPhotoBytes,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Pick Test Photo'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Selected phone photo (${selectedPhotoBytes.length} bytes).'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Run Diagnostics'));
+    await tester.pumpAndSettle();
+
+    expect(onDevice.lastProbeBytes, selectedPhotoBytes);
+    expect(
+      find.textContaining(
+        'Gemma probe image: selected phone photo (${selectedPhotoBytes.length} bytes)',
+      ),
+      findsOneWidget,
+    );
   });
 }
 
@@ -95,6 +169,11 @@ Widget _buildTestApp(Widget child) {
 }
 
 class _FakeOnDeviceVisionService extends OnDeviceVisionService {
+  _FakeOnDeviceVisionService({this.loadResult = true});
+
+  final bool loadResult;
+  Uint8List? lastProbeBytes;
+
   @override
   Future<bool> pingNativeChannel() async => true;
 
@@ -118,7 +197,32 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
   }
 
   @override
-  Future<bool> loadGemmaModel() async => true;
+  Future<bool> loadGemmaModel() async => loadResult;
+
+  @override
+  Future<GemmaReadinessReport> runGemmaReadinessProbe(
+    Uint8List jpegBytes, {
+    String systemPrompt =
+        'Describe this image for a blind user in 3 complete spoken sentences with hazards, layout, text, and path details.',
+    Map<String, dynamic>? context,
+    String? cacheKey,
+  }) async {
+    lastProbeBytes = jpegBytes;
+    return GemmaReadinessReport.fromMap({
+      'runtimeLinked': true,
+      'filesPresent': true,
+      'shaVerified': true,
+      'loadSuccess': loadResult,
+      'loadLatencyMs': 100,
+      'imageEvalLatencyMs': 100,
+      'firstTokenLatencyMs': 100,
+      'totalLatencyMs': 300,
+      'tokenCount': 0,
+      'sanitizedOutput': '',
+      'passed': false,
+      'failureReason': 'Probe failed.',
+    });
+  }
 
   @override
   Future<OfflineVisionDiagnostics> getOfflineVisionDiagnostics() async {
