@@ -14,7 +14,7 @@ uint8_t hapticIntensity = 0;
 unsigned long lastHapticPulse = 0;
 uint16_t hapticPulseInterval = 0;
 
-#define HAPTIC_DETECTION_LOGIC_MAX_MM 1000
+#define HAPTIC_DETECTION_LOGIC_MAX_MM 1500
 #define HAPTIC_DETECTION_LOGIC_MIN_MM 400
 #define HAPTIC_DETECTION_LOGIC_INVALID_MM 9999
 #define HAPTIC_DETECTION_LOGIC_ON_INTENSITY HAPTIC_MEDIUM
