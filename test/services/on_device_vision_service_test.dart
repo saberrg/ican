@@ -644,6 +644,62 @@ void main() {
       expect(snapshot, contains('<redacted>'));
     },
   );
+
+  group('hasUsefulSpokenOutput', () {
+    // Relaxed from the earlier 8-word / terminal-punctuation requirements so
+    // short SmolVLM2 probe outputs don't permanently disable the model.
+    test('accepts 4-word outputs with punctuation', () {
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput('A dim room ahead.'),
+        isTrue,
+      );
+    });
+
+    test('accepts 4-word outputs without terminal punctuation', () {
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+          'a hallway with two chairs',
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects outputs under the 4-word floor', () {
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput('A dim room.'),
+        isFalse,
+      );
+    });
+
+    test('still rejects banned meta tokens', () {
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+          'smolvlm says hello world here',
+        ),
+        isFalse,
+      );
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+          'as an ai i cannot really see this',
+        ),
+        isFalse,
+      );
+    });
+
+    test('still rejects 4-word repetition loops', () {
+      expect(
+        SmolVlmReadinessReport.hasUsefulSpokenOutput(
+          'the door is open the door is open',
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  test('clearReadinessFailureCache empties the in-memory failure set', () {
+    // Method is a no-throw side effect; smoke test that it runs without error.
+    OnDeviceVisionService.clearReadinessFailureCache();
+  });
 }
 
 const _diagnostics = {

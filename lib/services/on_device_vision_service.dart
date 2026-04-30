@@ -724,12 +724,21 @@ class SmolVlmReadinessReport {
     return null;
   }
 
+  @visibleForTesting
+  static bool hasUsefulSpokenOutput(String text) =>
+      _hasUsefulSpokenOutput(text);
+
   static bool _hasUsefulSpokenOutput(String text) {
     final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (normalized.isEmpty) return false;
     final words = RegExp(r"[A-Za-z0-9']+").allMatches(normalized).length;
-    if (words < 8) return false;
-    if (!RegExp(r'''[.!?]["')\]]*$''').hasMatch(normalized)) return false;
+    // Relaxed from 8 → 4. SmolVLM2 probes on arbitrary scenes commonly yield
+    // tight outputs like "A dim hallway." which should count as "model
+    // produced coherent English" — downstream combine-with-template handles
+    // the rest.
+    if (words < 4) return false;
+    // Terminal-punctuation requirement removed: the 420-token loop can hit
+    // EOS mid-sentence and produce otherwise-valid output without a period.
     final lower = normalized.toLowerCase();
     if (RegExp(
       r'\b(smolvlm|llama|model|prompt|token|assistant|system|user|image\s+shows|as\s+an\s+ai)\b',
@@ -792,7 +801,19 @@ class OnDeviceVisionService {
   static const _firstNativeTokenTimeout = Duration(seconds: 120);
   static const _readinessPrefsKey = 'smol_vlm_readiness_capability_v1';
   static const _lastReadinessPrefsKey = 'smol_vlm_readiness_last_report_v1';
-  static final Set<String> _failedReadinessKeys = <String>{};
+  // Timestamped so a one-off probe failure (e.g. dark image yielding a very
+  // short SmolVLM caption) doesn't permanently disable SmolVLM for the
+  // session. Past failures are ignored once older than this TTL.
+  static const _readinessFailureTtl = Duration(minutes: 10);
+  static final Map<String, DateTime> _failedReadinessKeys =
+      <String, DateTime>{};
+
+  /// Clears the in-memory readiness-failure cache. Useful when the user has
+  /// taken corrective action (re-downloaded the model, moved to a well-lit
+  /// scene) and wants SmolVLM2 to be tried again before the TTL expires.
+  static void clearReadinessFailureCache() {
+    _failedReadinessKeys.clear();
+  }
 
   Future<bool> pingNativeChannel() async {
     try {
@@ -1152,7 +1173,15 @@ class OnDeviceVisionService {
   }) async {
     final context = await _getSmolVlmReadinessContext();
     final cacheKey = _smolVlmReadinessCacheKey(context);
-    if (_failedReadinessKeys.contains(cacheKey)) return false;
+    final failedAt = _failedReadinessKeys[cacheKey];
+    if (failedAt != null &&
+        DateTime.now().difference(failedAt) < _readinessFailureTtl) {
+      return false;
+    }
+    if (failedAt != null) {
+      // TTL elapsed — forget the stale failure so a new probe can take over.
+      _failedReadinessKeys.remove(cacheKey);
+    }
 
     final cached = await _loadCachedSmolVlmReadiness(cacheKey);
     if (cached != null && cached.passed) return true;
@@ -1452,7 +1481,7 @@ class OnDeviceVisionService {
           jsonEncode({'cacheKey': cacheKey, 'report': redactedReport}),
         );
       } else {
-        _failedReadinessKeys.add(cacheKey);
+        _failedReadinessKeys[cacheKey] = DateTime.now();
         await prefs.remove(_readinessPrefsKey);
       }
     } catch (e) {

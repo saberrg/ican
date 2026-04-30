@@ -158,6 +158,22 @@ final class OnDeviceVisionChannel: NSObject {
             let visionCtx    = args["visionContext"] as? String
 
             Task {
+                // Ensure the model is resident in GPU memory before inference.
+                // loadModel() is idempotent, so this is a no-op after the first
+                // successful load in this app session. Without this, describes
+                // that happened before any readiness probe silently no-op'd
+                // with "SmolVLM2 not loaded — call loadModel() first".
+                let loaded = await LlamaService.shared.loadModel()
+                guard loaded else {
+                    DispatchQueue.main.async {
+                        vlmEventSink?(FlutterError(code: "VLM_NOT_LOADED",
+                                                   message: "SmolVLM2 could not be loaded",
+                                                   details: nil))
+                        vlmEventSink?(FlutterEndOfEventStream)
+                        result(false)
+                    }
+                    return
+                }
                 await LlamaService.shared.describeImage(
                     jpegData:      imageBytes,
                     systemPrompt:  systemPrompt,

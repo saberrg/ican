@@ -30,6 +30,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
   double _downloadProgress = 0;
   String _downloadPhase = '';
   String? _downloadError;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -197,6 +198,23 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
       _downloadPhase = 'Download cancelled.';
     });
     unawaited(_refreshQuickStatus());
+  }
+
+  Future<void> _loadModelNow() async {
+    setState(() => _loading = true);
+    try {
+      await _vision.loadVlmModel();
+    } catch (_) {
+      // loadVlmModel already handles its own errors and returns false.
+    }
+    if (!mounted) return;
+    setState(() => _loading = false);
+    await _refreshQuickStatus();
+  }
+
+  Future<void> _retryReadiness() async {
+    OnDeviceVisionService.clearReadinessFailureCache();
+    await _runDiagnostics();
   }
 
   Future<void> _deleteModel() async {
@@ -371,8 +389,35 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
                   'Downloads the local vision model so Local mode works offline',
               onPressed: _startDownload,
             ),
-          ] else if (_modelStatus == ModelStatus.ready ||
-              _modelStatus == ModelStatus.loaded) ...[
+          ] else if (_modelStatus == ModelStatus.ready) ...[
+            const SizedBox(height: AppSpacing.xs),
+            AccessibleButton(
+              label: _loading ? 'Loading SmolVLM2...' : 'Load SmolVLM2 now',
+              hint:
+                  'Loads the downloaded model into memory so Local mode can use it',
+              onPressed: _loading ? null : _loadModelNow,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            AccessibleButton(
+              label: 'Retry readiness probe',
+              hint:
+                  'Clears the cached readiness failure and re-runs diagnostics',
+              onPressed: _retryReadiness,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            AccessibleButton(
+              label: 'Delete Downloaded Model',
+              hint: 'Removes the local SmolVLM2 files',
+              onPressed: _deleteModel,
+            ),
+          ] else if (_modelStatus == ModelStatus.loaded) ...[
+            const SizedBox(height: AppSpacing.xs),
+            AccessibleButton(
+              label: 'Retry readiness probe',
+              hint:
+                  'Clears the cached readiness failure and re-runs diagnostics',
+              onPressed: _retryReadiness,
+            ),
             const SizedBox(height: AppSpacing.xs),
             AccessibleButton(
               label: 'Delete Downloaded Model',
