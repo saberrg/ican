@@ -7,6 +7,10 @@ final class ModelDownloadManager: NSObject {
     struct ModelFile {
         let name: String
         let url: String
+        /// Expected size in bytes. Informational only — used for the pre-flight
+        /// free-space check and UI surfaces. Not compared against the
+        /// downloaded file; upstream Hugging Face metadata has shifted this
+        /// value in the past, so SHA-256 is the only integrity signal.
         let sizeBytes: UInt64
         let sha256: String
     }
@@ -18,7 +22,7 @@ final class ModelDownloadManager: NSObject {
         ModelFile(
             name: LlamaService.textModelFilename,
             url: "\(baseURL)/\(LlamaService.textModelFilename)",
-            sizeBytes: 436_807_568,
+            sizeBytes: 436_808_704,
             sha256: "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"
         ),
         ModelFile(
@@ -252,19 +256,25 @@ final class ModelDownloadManager: NSObject {
     }
 
     private func isFileValid(_ file: ModelFile, at url: URL, verifyHash: Bool) -> Bool {
-        guard fileSize(at: url) == file.sizeBytes else {
+        // File must exist and be non-empty — zero-byte files are never valid.
+        // Size is NOT compared to the pinned constant: upstream metadata on
+        // Hugging Face has quietly shifted the file's byte count before, and
+        // SHA-256 is the authoritative integrity signal.
+        let size = fileSize(at: url)
+        guard size > 0 else {
             invalidateSidecar(for: url)
             return false
         }
         guard verifyHash else { return true }
 
         // Fast path: a sidecar file recorded a matching hash earlier. We trust
-        // it as long as the main file's size + modification time have not
-        // changed. Full SHA256 on ~440 MB models takes ~20-30 s on older
-        // devices, so skipping it on every launch is load-bearing for the
-        // "SmolVLM2 does not appear to re-download" acceptance criterion.
+        // it as long as the main file's size + modification time match what
+        // we saw at verification time. Full SHA256 on ~440 MB models takes
+        // ~20-30 s on older devices, so skipping it on every launch is
+        // load-bearing for the "SmolVLM2 does not appear to re-download"
+        // acceptance criterion.
         if let sidecar = readSidecar(for: url),
-           sidecar.sizeBytes == file.sizeBytes,
+           sidecar.sizeBytes == size,
            sidecar.sha256.caseInsensitiveCompare(file.sha256) == .orderedSame,
            let mtime = fileModificationTime(at: url),
            abs(mtime.timeIntervalSince1970 - sidecar.mtimeEpoch) < 0.001 {
@@ -285,7 +295,7 @@ final class ModelDownloadManager: NSObject {
                 for: url,
                 entry: VerifiedSidecar(
                     sha256: file.sha256,
-                    sizeBytes: file.sizeBytes,
+                    sizeBytes: size,
                     mtimeEpoch: mtime.timeIntervalSince1970
                 )
             )
@@ -424,7 +434,7 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
         }
 
         guard isFileValid(file, at: location, verifyHash: true) else {
-            finish(success: false, error: "Downloaded \(file.name) did not match expected size or SHA-256.")
+            finish(success: false, error: "Downloaded \(file.name) did not match expected SHA-256.")
             return
         }
 
