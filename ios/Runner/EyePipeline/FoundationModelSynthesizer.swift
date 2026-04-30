@@ -28,6 +28,21 @@ final class FoundationModelSynthesizer {
         return false
     }
 
+    /// String reason describing *why* Foundation Models is (un)available. Used
+    /// by the Vision Diagnostic screen so the user can see whether they need
+    /// to enable Apple Intelligence, wait for the system model to download, or
+    /// accept that their device is not eligible.
+    static var availabilityReason: String {
+        #if canImport(FoundationModels)
+        if #available(iOS 26.0, *) {
+            return _foundationModelsAvailabilityReason()
+        }
+        return "iosTooOld"
+        #else
+        return "frameworkMissing"
+        #endif
+    }
+
     // MARK: - Synthesis
 
     /// Generate a spoken scene description from structured context text.
@@ -75,6 +90,25 @@ private func _foundationModelsAvailable() -> Bool {
 }
 
 @available(iOS 26.0, *)
+private func _foundationModelsAvailabilityReason() -> String {
+    switch SystemLanguageModel.default.availability {
+    case .available:
+        return "available"
+    case .unavailable(let reason):
+        switch reason {
+        case .appleIntelligenceNotEnabled:
+            return "appleIntelligenceDisabled"
+        case .deviceNotEligible:
+            return "deviceNotEligible"
+        case .modelNotReady:
+            return "modelDownloading"
+        @unknown default:
+            return "unknown"
+        }
+    }
+}
+
+@available(iOS 26.0, *)
 private func _synthesizeWithFoundationModels(
     context:      String,
     systemPrompt: String,
@@ -116,7 +150,8 @@ private func _synthesizeWithFoundationModels(
 
 #else
 
-// Stub so the non-guarded call sites still compile on pre-iOS 26 SDKs.
+// Stubs so the non-guarded call sites still compile on pre-iOS 26 SDKs.
 private func _foundationModelsAvailable() -> Bool { false }
+private func _foundationModelsAvailabilityReason() -> String { "frameworkMissing" }
 
 #endif

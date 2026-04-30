@@ -1093,6 +1093,22 @@ class OnDeviceVisionService {
     }
   }
 
+  /// Reason code describing the current Foundation Models availability. Useful
+  /// for surfacing actionable guidance ("enable Apple Intelligence in Settings",
+  /// "model is still downloading") instead of a generic "unavailable". Values:
+  /// 'available', 'appleIntelligenceDisabled', 'deviceNotEligible',
+  /// 'modelDownloading', 'iosTooOld', 'frameworkMissing', 'unknown'.
+  Future<String> foundationModelsAvailabilityReason() async {
+    try {
+      final result = await _method.invokeMethod<String>(
+        'foundationModelsAvailabilityReason',
+      );
+      return result ?? 'unknown';
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
   /// Synthesize a scene description using Apple Foundation Models.
   /// Streams text chunks (sentences) via EventChannel.
   Stream<String> synthesizeWithFoundationModels(

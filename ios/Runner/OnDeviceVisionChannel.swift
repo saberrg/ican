@@ -96,6 +96,10 @@ final class OnDeviceVisionChannel: NSObject {
         case "isFoundationModelsAvailable":
             result(FoundationModelSynthesizer.isAvailable)
 
+        // ── Layer 3: Why Foundation Models is (un)available ─────────────────
+        case "foundationModelsAvailabilityReason":
+            result(FoundationModelSynthesizer.availabilityReason)
+
         // ── Layer 3: Foundation Models synthesis (streams via fm_stream) ─────
         case "synthesizeDescription":
             guard let args = call.arguments as? [String: Any] else {

@@ -16,6 +16,7 @@ import '../models/home_view_model.dart';
 import '../models/settings_provider.dart';
 import '../services/ble_service.dart';
 import '../services/device_prefs_service.dart';
+import '../services/on_device_vision_service.dart';
 import '../services/scene_description_service.dart';
 import '../services/voice_command_service.dart';
 import '../widgets/accessible_button.dart';
@@ -109,6 +110,8 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
                     ],
                     const SizedBox(height: AppSpacing.sm),
                     _DescriptionPanel(vm: vm),
+                    const SizedBox(height: AppSpacing.sm),
+                    const _LocalModelMissingBanner(),
                     if (vm.lastDiagnostic.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.sm),
                       _DiagnosticPanel(diagnostic: vm.lastDiagnostic),
@@ -750,6 +753,146 @@ class _DiagnosticPanel extends StatelessWidget {
                     Clipboard.setData(ClipboardData(text: diagnostic)),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Appears on Home when the user is in Local vision mode but no local
+/// generative backend (SmolVLM2 or Foundation Models) is available. Tapping
+/// the banner opens Vision Diagnostic where the model can be downloaded or
+/// Apple Intelligence can be enabled. Dismissible per-session — reappears on
+/// next app launch so the user isn't nagged while still pair-debugging.
+class _LocalModelMissingBanner extends StatefulWidget {
+  const _LocalModelMissingBanner();
+
+  @override
+  State<_LocalModelMissingBanner> createState() =>
+      _LocalModelMissingBannerState();
+}
+
+class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
+  final _vision = OnDeviceVisionService();
+  bool _dismissed = false;
+  ModelStatus? _status;
+  bool? _fmAvailable;
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refresh());
+    // Re-poll every 15s so the banner disappears once a download finishes or
+    // the user enables Apple Intelligence — without a full navigation cycle.
+    _poll = Timer.periodic(const Duration(seconds: 15), (_) => _refresh());
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final status = await _vision.getModelStatus();
+      final fm = await _vision.isFoundationModelsAvailable();
+      if (!mounted) return;
+      setState(() {
+        _status = status;
+        _fmAvailable = fm;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _status = ModelStatus.notDownloaded;
+        _fmAvailable = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
+    final vm = context.watch<HomeViewModel>();
+    if (vm.liveVisionActive) return const SizedBox.shrink();
+    // Only prod the user when they're actually using Local — Cloud mode users
+    // don't care that the local model isn't installed.
+    if (vm.sceneService.mode != VisionMode.offlineOnly) {
+      return const SizedBox.shrink();
+    }
+    final status = _status;
+    final fmAvailable = _fmAvailable;
+    // Still checking — render nothing to avoid a flash of the banner.
+    if (status == null || fmAvailable == null) return const SizedBox.shrink();
+    // A usable local backend exists → hide.
+    final smolReady =
+        status == ModelStatus.ready || status == ModelStatus.loaded;
+    if (smolReady || fmAvailable) return const SizedBox.shrink();
+
+    final downloading = status == ModelStatus.downloading;
+    final title = downloading
+        ? 'Local vision model is downloading'
+        : 'Local vision model not installed';
+    final body = downloading
+        ? 'Tap to open diagnostics and see progress.'
+        : 'Tap to download (~500 MB, Wi-Fi recommended). Until then, Local mode falls back to a short template description.';
+
+    return Semantics(
+      button: true,
+      label: '$title. $body',
+      child: InkWell(
+        onTap: () => context.pushNamed('vision-diagnostic'),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceCardLight,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: AppColors.warning.withValues(alpha: 0.7),
+              width: 1.5,
+            ),
+          ),
+          child: ExcludeSemantics(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.download_rounded, color: AppColors.warning),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textOnLight,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        body,
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          color: AppColors.textSecondaryOnLight,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Dismiss',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _dismissed = true),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -63,9 +63,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Apple Vision: ready'), findsOneWidget);
+    // The diagnostic surface now shows the Foundation Models status in two
+    // places: the always-visible card at the top and the detailed report.
     expect(
       find.textContaining('Foundation Models: unavailable'),
-      findsOneWidget,
+      findsAtLeastNWidgets(1),
     );
     expect(find.textContaining('SmolVLM2 status: downloaded'), findsOneWidget);
     expect(
@@ -105,6 +107,12 @@ class _FakeOnDeviceVisionService extends OnDeviceVisionService {
 
   @override
   Future<bool> isAppleVisionAvailable() async => true;
+
+  @override
+  Future<ModelStatus> getModelStatus() async => ModelStatus.ready;
+
+  @override
+  Future<String> foundationModelsAvailabilityReason() async => 'unknown';
 
   @override
   Future<OfflineVisionStatus> getOfflineVisionStatus() async {
