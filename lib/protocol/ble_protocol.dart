@@ -16,6 +16,12 @@ class BleServices {
 
   static const String caneServiceUuid = '10000001-1000-1000-1000-100000000000';
   static const String eyeServiceUuid = '20000001-2000-2000-2000-200000000000';
+
+  // ProtoSmartCane firmware (firmware/protosmart_cane/include/config.h:170-171)
+  // advertises a different service UUID and a different telemetry characteristic.
+  // The Dart app accepts either so whichever cane firmware is flashed works.
+  static const String protoSmartServiceUuid =
+      '12345678-1234-1234-1234-123456789abc';
 }
 
 // ===========================================================================
@@ -31,6 +37,10 @@ class BleCharacteristics {
   static const String imuTelemetryTx = '10000004-1000-1000-1000-100000000000';
   static const String caneStatusTx = '10000005-1000-1000-1000-100000000000';
   static const String gpsDataTx = '10000006-1000-1000-1000-100000000000';
+
+  // ProtoSmartCane telemetry characteristic (v3 packed 19-byte packet).
+  static const String protoSmartTelemetryTx =
+      'abcd1234-5678-5678-5678-abcd12345678';
 
   // ---- Eye ----
   static const String eyeInstantTextTx = '20000002-2000-2000-2000-200000000000';
@@ -92,10 +102,35 @@ class TelemetryPacket {
     required this.yawAngleTenths,
   });
 
-  /// Decode a 6-byte telemetry payload from the Cane.
+  /// Decode a telemetry payload from either cane firmware.
+  ///
+  /// ProtoSmartCane v3 (19 bytes, packed, first byte = 0x03):
+  ///   version | batteryPercent | currentMode | heartBPM | flags | ...
+  ///   flags bit 0 = fall_detected (held 2s on the cane, see
+  ///   firmware/protosmart_cane/include/config.h FALL_FLAG_HOLD_MS).
+  ///
+  /// Legacy ican_cane (6 bytes):
+  ///   flags | pulseBpm | batteryPercent | yawAngle(i16_le) | reserved
   factory TelemetryPacket.fromBytes(Uint8List data) {
+    if (data.isEmpty) {
+      throw ArgumentError('Telemetry packet was empty');
+    }
+
+    // ProtoSmartCane v3 packet is 19 bytes; first byte is the version tag.
+    if (data.length >= 19 && data[0] == 0x03) {
+      final flags = data[4];
+      final bpm = data[3];
+      return TelemetryPacket(
+        fallDetected: (flags & 0x01) != 0,
+        pulseValid: bpm > 0,
+        pulseBpm: bpm,
+        batteryPercent: data[1],
+        yawAngleTenths: 0,
+      );
+    }
+
     if (data.length < 6) {
-      throw ArgumentError('Telemetry packet must be at least 6 bytes');
+      throw ArgumentError('Telemetry packet too short: ${data.length} bytes');
     }
     final flags = data[0];
     final byteData = ByteData.sublistView(data);

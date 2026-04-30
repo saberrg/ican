@@ -205,14 +205,14 @@ class VoiceCommandService extends ChangeNotifier {
     }
     _lastResult = error.permanent
         ? 'Microphone error. Check speech recognition permissions.'
-        : 'I had trouble hearing that. Double press to try again.';
+        : 'I had trouble hearing that. Tap Listen to try again.';
     await _speakSafely(_lastResult);
     _setState(VoiceCommandState.idle);
   }
 
   Future<void> _onNoSpeech() async {
     await _speakSafely(
-      "I didn't hear a command. Double press or tap Listen to try again.",
+      "I didn't hear a command. Double-tap the screen or tap Listen to try again.",
     );
     _lastResult = "I didn't hear anything.";
     _setState(VoiceCommandState.idle);

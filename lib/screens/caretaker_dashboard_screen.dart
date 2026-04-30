@@ -16,8 +16,7 @@ class CaretakerDashboardScreen extends StatefulWidget {
       _CaretakerDashboardScreenState();
 }
 
-class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
-    with SingleTickerProviderStateMixin {
+class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen> {
   StreamSubscription<TelemetryPacket>? _telemetrySub;
 
   TelemetryPacket? _latest;
@@ -25,27 +24,15 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
   // Active fall state
   bool _fallAcknowledged = false;
   DateTime? _fallTime;
+  GpsPacket? _fallLocation;
   bool _fallDialogShown = false;
 
   // Fall history — persists for the session, never cleared on acknowledge
   final List<_FallRecord> _fallHistory = [];
 
-  // Heartbeat animation
-  late final AnimationController _heartController;
-  late final Animation<double> _heartScale;
-
   @override
   void initState() {
     super.initState();
-
-    _heartController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _heartScale = Tween<double>(
-      begin: 1.0,
-      end: 1.35,
-    ).animate(CurvedAnimation(parent: _heartController, curve: Curves.easeOut));
 
     _telemetrySub = BleService.instance.telemetryStream.listen(_onTelemetry);
     BleService.instance.addListener(_onBleStateChanged);
@@ -56,22 +43,24 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
   void _onTelemetry(TelemetryPacket pkt) {
     setState(() => _latest = pkt);
 
-    if (pkt.pulseValid) {
-      _heartController.forward(from: 0);
-    }
-
     // Rising edge — new fall event
     if (pkt.fallDetected && _fallTime == null) {
       final now = DateTime.now();
+      final location = BleService.instance.lastGps;
       setState(() {
         _fallTime = now;
+        _fallLocation = location;
         _fallAcknowledged = false;
         _fallDialogShown = false;
-        _fallHistory.insert(0, _FallRecord(time: now)); // newest first
+        _fallHistory.insert(
+          0,
+          _FallRecord(time: now, location: location),
+        ); // newest first
       });
       _showFallDialog();
       debugPrint(
-        '[Caretaker] Fall recorded at $now. Total: ${_fallHistory.length}',
+        '[Caretaker] Fall recorded at $now, location: '
+        '${_formatLocation(location)}. Total: ${_fallHistory.length}',
       );
     }
 
@@ -79,6 +68,7 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
     if (!pkt.fallDetected && _fallTime != null && _fallAcknowledged) {
       setState(() {
         _fallTime = null;
+        _fallLocation = null;
         _fallDialogShown = false;
       });
     }
@@ -113,7 +103,9 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
             ],
           ),
           content: Text(
-            'iCan Cane has detected a fall event.\n\nCheck on the user immediately.',
+            'iCan Cane has detected a fall event.\n\n'
+            'Check on the user immediately.\n\n'
+            'Location: ${_formatLocation(_fallLocation)}',
             style: TextStyle(color: ICanTheme.textPrimary, fontSize: 16),
           ),
           actions: [
@@ -163,7 +155,6 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
   void dispose() {
     _telemetrySub?.cancel();
     BleService.instance.removeListener(_onBleStateChanged);
-    _heartController.dispose();
     super.dispose();
   }
 
@@ -174,27 +165,17 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
   bool get _caneConnected =>
       BleService.instance.caneState == BleConnectionState.connected;
 
+  static String _formatLocation(GpsPacket? gps) {
+    if (gps == null) return 'Unknown (no GPS data received yet).';
+    if (!gps.fixValid) return 'Unknown (no GPS fix).';
+    final lat = gps.latitude.toStringAsFixed(6);
+    final lon = gps.longitude.toStringAsFixed(6);
+    return '$lat, $lon';
+  }
+
   bool get _caneScanning =>
       BleService.instance.caneState == BleConnectionState.scanning ||
       BleService.instance.caneState == BleConnectionState.connecting;
-
-  // Heart rate status label + color
-  String _hrLabel(int bpm) {
-    if (bpm < 40) return 'Too Low';
-    if (bpm < 60) return 'Low';
-    if (bpm <= 100) return 'Normal';
-    if (bpm <= 140) return 'Elevated';
-    return 'Too High';
-  }
-
-  Color _hrColor(int bpm) {
-    if (bpm < 40 || bpm > 140) return ICanTheme.error;
-    if (bpm < 60 || bpm > 100) return ICanTheme.accentOrange;
-    return ICanTheme.success;
-  }
-
-  // BPM as fraction 0–1 mapped to a 40–180 range for the range bar
-  double _hrFraction(int bpm) => ((bpm - 40) / (180 - 40)).clamp(0.0, 1.0);
 
   // ---------------------------------------------------------------------------
   // Build
@@ -226,19 +207,10 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen>
               onScan: () => BleService.instance.startScanForCane(),
             ),
             const SizedBox(height: 12),
-            _HeartRateCard(
-              pkt: _latest,
-              heartScale: _heartScale,
-              hrLabel: _hrLabel,
-              hrColor: _hrColor,
-              hrFraction: _hrFraction,
-            ),
-            const SizedBox(height: 12),
-            _BatteryCard(pkt: _latest),
-            const SizedBox(height: 12),
             _FallAlertCard(
               hasFall: hasFall,
               fallTime: _fallTime,
+              fallLocation: _fallLocation,
               onAcknowledge: _acknowledgeFall,
             ),
             const SizedBox(height: 12),
@@ -365,228 +337,18 @@ class _ConnectionCard extends StatelessWidget {
   }
 }
 
-// --- Heart Rate ---
-class _HeartRateCard extends StatelessWidget {
-  const _HeartRateCard({
-    required this.pkt,
-    required this.heartScale,
-    required this.hrLabel,
-    required this.hrColor,
-    required this.hrFraction,
-  });
-
-  final TelemetryPacket? pkt;
-  final Animation<double> heartScale;
-  final String Function(int) hrLabel;
-  final Color Function(int) hrColor;
-  final double Function(int) hrFraction;
-
-  @override
-  Widget build(BuildContext context) {
-    final bool valid = pkt?.pulseValid ?? false;
-    final int bpm = pkt?.pulseBpm ?? 0;
-    final Color color = valid ? hrColor(bpm) : ICanTheme.textSecondary;
-
-    return _DashCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              ScaleTransition(
-                scale: heartScale,
-                child: Icon(Icons.favorite_rounded, color: color, size: 22),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Heart Rate',
-                style: TextStyle(
-                  color: ICanTheme.textSecondary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                valid ? '$bpm' : '--',
-                style: TextStyle(
-                  color: color,
-                  fontSize: 52,
-                  fontWeight: FontWeight.bold,
-                  height: 1.0,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  valid ? 'BPM' : 'No Signal',
-                  style: const TextStyle(
-                    color: ICanTheme.textSecondary,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              if (valid)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color.withAlpha(38),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    hrLabel(bpm),
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          if (valid) ...[
-            const SizedBox(height: 12),
-            _HrRangeBar(fraction: hrFraction(bpm), color: color),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _HrRangeBar extends StatelessWidget {
-  const _HrRangeBar({required this.fraction, required this.color});
-  final double fraction;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (_, constraints) {
-        return Stack(
-          children: [
-            // Background track
-            Container(
-              height: 6,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.white10,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
-            // Filled portion
-            Container(
-              height: 6,
-              width: constraints.maxWidth * fraction,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ),
-            // Normal zone markers (60–100 BPM = 31%–42% of 40–180 range)
-            Positioned(
-              left: constraints.maxWidth * 0.148, // 60 BPM
-              child: Container(width: 2, height: 6, color: Colors.white24),
-            ),
-            Positioned(
-              left: constraints.maxWidth * 0.429, // 100 BPM
-              child: Container(width: 2, height: 6, color: Colors.white24),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// --- Battery ---
-class _BatteryCard extends StatelessWidget {
-  const _BatteryCard({required this.pkt});
-  final TelemetryPacket? pkt;
-
-  @override
-  Widget build(BuildContext context) {
-    final int pct = pkt?.batteryPercent ?? 0;
-    final bool hasData = pkt != null;
-    final Color barColor = pct <= 20
-        ? ICanTheme.error
-        : pct <= 40
-        ? ICanTheme.accentOrange
-        : ICanTheme.success;
-
-    return _DashCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                pct <= 20
-                    ? Icons.battery_alert_rounded
-                    : pct <= 50
-                    ? Icons.battery_4_bar_rounded
-                    : Icons.battery_full_rounded,
-                color: barColor,
-                size: 22,
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Battery',
-                style: TextStyle(
-                  color: ICanTheme.textSecondary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                hasData ? '$pct%' : '--',
-                style: TextStyle(
-                  color: hasData
-                      ? ICanTheme.textPrimary
-                      : ICanTheme.textSecondary,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(
-              value: hasData ? pct / 100.0 : 0,
-              minHeight: 6,
-              backgroundColor: Colors.white10,
-              valueColor: AlwaysStoppedAnimation<Color>(barColor),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 // --- Fall Alert ---
 class _FallAlertCard extends StatelessWidget {
   const _FallAlertCard({
     required this.hasFall,
     required this.fallTime,
+    required this.fallLocation,
     required this.onAcknowledge,
   });
 
   final bool hasFall;
   final DateTime? fallTime;
+  final GpsPacket? fallLocation;
   final VoidCallback onAcknowledge;
 
   @override
@@ -648,6 +410,28 @@ class _FallAlertCard extends StatelessWidget {
             'iCan Cane has detected a fall event. Check on the user immediately.',
             style: TextStyle(color: ICanTheme.textPrimary, fontSize: 14),
           ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.location_on_rounded,
+                color: Colors.redAccent,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _CaretakerDashboardScreenState._formatLocation(fallLocation),
+                  style: const TextStyle(
+                    color: ICanTheme.textPrimary,
+                    fontSize: 14,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
@@ -681,8 +465,9 @@ class _FallAlertCard extends StatelessWidget {
 
 // --- Fall Record data class ---
 class _FallRecord {
-  _FallRecord({required this.time});
+  _FallRecord({required this.time, this.location});
   final DateTime time;
+  final GpsPacket? location;
   bool acknowledged = false;
 }
 
@@ -733,34 +518,52 @@ class _FallHistoryCard extends StatelessWidget {
             ...history.map(
               (r) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      r.acknowledged
-                          ? Icons.check_circle_rounded
-                          : Icons.warning_rounded,
-                      color: r.acknowledged
-                          ? ICanTheme.textSecondary
-                          : Colors.redAccent,
-                      size: 16,
+                    Row(
+                      children: [
+                        Icon(
+                          r.acknowledged
+                              ? Icons.check_circle_rounded
+                              : Icons.warning_rounded,
+                          color: r.acknowledged
+                              ? ICanTheme.textSecondary
+                              : Colors.redAccent,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _fmt(r.time),
+                          style: const TextStyle(
+                            color: ICanTheme.textPrimary,
+                            fontSize: 14,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          r.acknowledged ? 'Acknowledged' : 'Active',
+                          style: TextStyle(
+                            color: r.acknowledged
+                                ? ICanTheme.textSecondary
+                                : Colors.redAccent,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _fmt(r.time),
-                      style: const TextStyle(
-                        color: ICanTheme.textPrimary,
-                        fontSize: 14,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      r.acknowledged ? 'Acknowledged' : 'Active',
-                      style: TextStyle(
-                        color: r.acknowledged
-                            ? ICanTheme.textSecondary
-                            : Colors.redAccent,
-                        fontSize: 12,
+                    Padding(
+                      padding: const EdgeInsets.only(left: 24, top: 2),
+                      child: Text(
+                        _CaretakerDashboardScreenState._formatLocation(
+                          r.location,
+                        ),
+                        style: const TextStyle(
+                          color: ICanTheme.textSecondary,
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                        ),
                       ),
                     ),
                   ],

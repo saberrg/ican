@@ -70,44 +70,51 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
       backgroundColor: AppColors.backgroundLight,
       body: Stack(
         children: [
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.sm,
-                AppSpacing.sm,
-                AppSpacing.sm,
-                AppSpacing.lg,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _ApiKeyWarningBanner(),
-                  const _HomeHeader(),
-                  const SizedBox(height: AppSpacing.sm),
-                  _StatusBand(vm: vm, voiceCommands: voiceCommands),
-                  const SizedBox(height: AppSpacing.sm),
-                  const _EyeWifiRow(),
-                  const SizedBox(height: AppSpacing.sm),
-                  if (vm.liveVisionActive) ...[
-                    const _LivePreview(),
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            excludeFromSemantics: true,
+            onDoubleTap: () => _launchVoiceIfIdle(voiceCommands),
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.sm,
+                  AppSpacing.sm,
+                  AppSpacing.sm,
+                  AppSpacing.lg,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _ApiKeyWarningBanner(),
+                    const _HomeHeader(),
                     const SizedBox(height: AppSpacing.sm),
-                  ],
-                  _ModeChips(vm: vm, settings: settings),
-                  const SizedBox(height: AppSpacing.sm),
-                  _VoiceCommandPanel(service: voiceCommands),
-                  if (settings.lastChangeSummary.isNotEmpty) ...[
+                    _StatusBand(vm: vm, voiceCommands: voiceCommands),
                     const SizedBox(height: AppSpacing.sm),
-                    _TuningFeedbackBanner(summary: settings.lastChangeSummary),
-                  ],
-                  const SizedBox(height: AppSpacing.sm),
-                  _DescriptionPanel(vm: vm),
-                  if (vm.lastDiagnostic.isNotEmpty) ...[
+                    const _EyeWifiRow(),
                     const SizedBox(height: AppSpacing.sm),
-                    _DiagnosticPanel(diagnostic: vm.lastDiagnostic),
+                    if (vm.liveVisionActive) ...[
+                      const _LivePreview(),
+                      const SizedBox(height: AppSpacing.sm),
+                    ],
+                    _ModeChips(vm: vm, settings: settings),
+                    const SizedBox(height: AppSpacing.sm),
+                    _VoiceCommandPanel(service: voiceCommands),
+                    if (settings.lastChangeSummary.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      _TuningFeedbackBanner(
+                        summary: settings.lastChangeSummary,
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.sm),
+                    _DescriptionPanel(vm: vm),
+                    if (vm.lastDiagnostic.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      _DiagnosticPanel(diagnostic: vm.lastDiagnostic),
+                    ],
+                    const SizedBox(height: AppSpacing.md),
+                    _FlowActions(vm: vm),
                   ],
-                  const SizedBox(height: AppSpacing.md),
-                  _FlowActions(vm: vm),
-                ],
+                ),
               ),
             ),
           ),
@@ -120,6 +127,14 @@ class _AccessibleHomeScreenState extends State<AccessibleHomeScreen> {
         ],
       ),
     );
+  }
+
+  void _launchVoiceIfIdle(VoiceCommandService? service) {
+    if (service == null) return;
+    if (service.state != VoiceCommandState.idle) return;
+    HapticFeedback.mediumImpact();
+    SemanticsService.announce('Listening', TextDirection.ltr);
+    unawaited(service.activateVoiceCommand());
   }
 
   VoiceCommandService? _voiceCommandsOrNull() {
@@ -413,7 +428,7 @@ class _VoiceCommandPanel extends StatelessWidget {
         ? partial
         : result.isNotEmpty
         ? result
-        : 'Double press the Eye or tap Listen.';
+        : 'Double-tap anywhere or press Listen to speak.';
 
     return Semantics(
       liveRegion: true,

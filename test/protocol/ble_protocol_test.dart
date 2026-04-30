@@ -32,6 +32,36 @@ void main() {
         );
       }
     });
+
+    test('decodes ProtoSmartCane v3 19-byte packet with fall flag set', () {
+      // Layout: version | battery | mode | heartBPM | flags | ...
+      final data = Uint8List(19);
+      data[0] = 0x03; // version
+      data[1] = 77; // battery%
+      data[2] = 0; // mode: NORMAL
+      data[3] = 68; // heartBPM
+      data[4] = 0x01; // flags: fall_detected
+
+      final packet = TelemetryPacket.fromBytes(data);
+
+      expect(packet.fallDetected, isTrue);
+      expect(packet.pulseValid, isTrue);
+      expect(packet.pulseBpm, 68);
+      expect(packet.batteryPercent, 77);
+    });
+
+    test('v3 packet with fall flag clear parses fallDetected=false', () {
+      final data = Uint8List(19);
+      data[0] = 0x03;
+      data[1] = 90;
+      data[3] = 70;
+      data[4] = 0x00;
+
+      final packet = TelemetryPacket.fromBytes(data);
+
+      expect(packet.fallDetected, isFalse);
+      expect(packet.pulseBpm, 70);
+    });
   });
 
   group('GpsPacket.fromBytes', () {

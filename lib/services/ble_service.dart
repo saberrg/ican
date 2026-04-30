@@ -323,7 +323,7 @@ class BleService extends ChangeNotifier {
   final _captureStartedController = StreamController<void>.broadcast();
   Stream<void> get captureStartedStream => _captureStartedController.stream;
 
-  // Button events from Eye (double-press triggers voice commands)
+  // Button events from Eye (single=describe, double=Cloud/Local, long=Live; not voice)
   final _buttonEventController = StreamController<String>.broadcast();
   Stream<String> get buttonEventStream => _buttonEventController.stream;
 
@@ -983,6 +983,7 @@ class BleService extends ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 300));
 
       final targetGuid = Guid(BleServices.caneServiceUuid);
+      final protoSmartGuid = Guid(BleServices.protoSmartServiceUuid);
 
       _caneScanSub = FlutterBluePlus.scanResults.listen((results) {
         if (_caneState != BleConnectionState.scanning) return;
@@ -1000,14 +1001,17 @@ class BleService extends ChangeNotifier {
             '[BLE Cane] NEARBY: "$name" [$id] RSSI:${r.rssi} services:$serviceUuids',
           );
 
+          final lcName = name.toLowerCase();
           final isCaneName =
-              name.toLowerCase().contains('ican') ||
-              name.toLowerCase().contains('cane');
+              lcName.contains('ican') ||
+              lcName.contains('cane') ||
+              lcName.contains('protosmart');
 
           bool isCaneService = false;
           try {
             for (final uuid in r.advertisementData.serviceUuids) {
-              if (Guid(uuid.toString()) == targetGuid) {
+              final g = Guid(uuid.toString());
+              if (g == targetGuid || g == protoSmartGuid) {
                 isCaneService = true;
                 break;
               }
@@ -1317,8 +1321,12 @@ class BleService extends ChangeNotifier {
     _gpsDataChar = null;
 
     final List<BluetoothService> services = await device.discoverServices();
+    final caneSvc = Guid(BleServices.caneServiceUuid);
+    final protoSvc = Guid(BleServices.protoSmartServiceUuid);
+    final telemetryChar = Guid(BleCharacteristics.imuTelemetryTx);
+    final protoTelemetryChar = Guid(BleCharacteristics.protoSmartTelemetryTx);
     for (BluetoothService service in services) {
-      if (service.uuid == Guid(BleServices.caneServiceUuid)) {
+      if (service.uuid == caneSvc || service.uuid == protoSvc) {
         for (BluetoothCharacteristic characteristic
             in service.characteristics) {
           // Nav RX
@@ -1342,9 +1350,9 @@ class BleService extends ChangeNotifier {
               }
             });
           }
-          // Telemetry TX (Notify)
-          else if (characteristic.uuid ==
-              Guid(BleCharacteristics.imuTelemetryTx)) {
+          // Telemetry TX (Notify) — either legacy 6-byte or ProtoSmart v3 19-byte.
+          else if (characteristic.uuid == telemetryChar ||
+              characteristic.uuid == protoTelemetryChar) {
             await characteristic.setNotifyValue(true);
             _telemetrySub = characteristic.onValueReceived.listen((value) {
               if (value.isNotEmpty) {
@@ -2502,7 +2510,7 @@ class BleService extends ChangeNotifier {
         debugPrint(
           '[BLE] FALL DETECTED — hr=${pkt.pulseBpm} bat=${pkt.batteryPercent}%',
         );
-        NotificationService.showFallAlert();
+        NotificationService.showFallAlert(gps: _lastGps);
       }
       _prevFallDetected = pkt.fallDetected;
 

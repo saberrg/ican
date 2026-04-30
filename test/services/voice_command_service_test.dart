@@ -86,7 +86,7 @@ void main() {
       expect(
         tts.spoken,
         contains(
-          "I didn't hear a command. Double press or tap Listen to try again.",
+          "I didn't hear a command. Double-tap the screen or tap Listen to try again.",
         ),
       );
     });
@@ -101,7 +101,7 @@ void main() {
       expect(service.lastError, 'network unavailable');
       expect(
         service.lastResult,
-        'I had trouble hearing that. Double press to try again.',
+        'I had trouble hearing that. Tap Listen to try again.',
       );
       expect(service.state, VoiceCommandState.idle);
     });

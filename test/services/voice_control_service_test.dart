@@ -204,6 +204,27 @@ void main() {
       );
     });
 
+    test('contact caretaker dispatches to the notification target', () async {
+      final result = await service.handleTranscript('contact caretaker');
+
+      expect(result.success, isTrue);
+      expect(target.caretakerAlertCount, 1);
+      expect(result.spokenConfirmation, 'Caretaker notified.');
+    });
+
+    test('contact caretaker fails gracefully when unsupported', () async {
+      target.canContactCaretaker = false;
+
+      final result = await service.handleTranscript('contact caretaker');
+
+      expect(result.success, isFalse);
+      expect(target.caretakerAlertCount, 0);
+      expect(
+        result.spokenConfirmation,
+        'Caretaker alerts are not available on this device.',
+      );
+    });
+
     test('does not claim repeat worked without a prior description', () async {
       target.canRepeatLast = false;
 
@@ -263,11 +284,16 @@ class _FakeVoiceControlTarget implements VoiceControlTarget {
   @override
   bool canScanDevices = true;
 
+  @override
+  bool canContactCaretaker = true;
+
   var describeCount = 0;
   var repeatCount = 0;
   var startLiveCount = 0;
   var stopLiveCount = 0;
   var resetSpeechDefaultsCount = 0;
+  var caretakerAlertCount = 0;
+  var caretakerAlertResult = true;
   var describeOutcome = 'Scene description complete.';
 
   @override
@@ -336,6 +362,12 @@ class _FakeVoiceControlTarget implements VoiceControlTarget {
 
   @override
   Future<void> scanDevices() async {}
+
+  @override
+  Future<bool> sendCaretakerAlert() async {
+    caretakerAlertCount++;
+    return caretakerAlertResult;
+  }
 }
 
 class _FakeFallbackParser implements VoiceIntentFallbackParser {

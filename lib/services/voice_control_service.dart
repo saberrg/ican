@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../models/home_view_model.dart';
 import '../models/settings_provider.dart';
 import 'ble_service.dart';
+import 'notification_service.dart';
 import 'scene_description_service.dart';
 import 'vertex_ai_service.dart';
 
@@ -523,6 +524,7 @@ abstract class VoiceControlTarget {
   bool get canStartLiveDetection;
   bool get canStopLiveDetection;
   bool get canScanDevices;
+  bool get canContactCaretaker;
 
   Future<void> setSpeechRate(double rate);
   Future<void> setVolume(double volume);
@@ -537,6 +539,7 @@ abstract class VoiceControlTarget {
   Future<void> startLiveDetection();
   Future<void> stopLiveDetection();
   Future<void> scanDevices();
+  Future<bool> sendCaretakerAlert();
 }
 
 class AppVoiceControlTarget implements VoiceControlTarget {
@@ -619,6 +622,9 @@ class AppVoiceControlTarget implements VoiceControlTarget {
   bool get canScanDevices => homeViewModel != null;
 
   @override
+  bool get canContactCaretaker => NotificationService.caretakerAlertsSupported;
+
+  @override
   Future<void> setSpeechRate(double rate) async {
     settings?.setSpeechRate(rate);
   }
@@ -689,6 +695,11 @@ class AppVoiceControlTarget implements VoiceControlTarget {
     homeViewModel?.startScanForEye();
     homeViewModel?.startScanForCane();
   }
+
+  @override
+  Future<bool> sendCaretakerAlert() => NotificationService.showCaretakerAlert(
+    reason: 'Voice command requested caretaker.',
+  );
 }
 
 class VoiceControlService {
@@ -766,9 +777,13 @@ class VoiceControlService {
       case VoiceActionType.help:
         return _ok(_helpText);
       case VoiceActionType.contactCaretaker:
-        return _fail(
-          'Caretaker contact is hidden for this demo. Say status, describe, cloud mode, local mode, or start live.',
-        );
+        if (!target.canContactCaretaker) {
+          return _fail('Caretaker alerts are not available on this device.');
+        }
+        final sent = await target.sendCaretakerAlert();
+        return sent
+            ? _ok('Caretaker notified.')
+            : _fail('Could not notify the caretaker.');
       case VoiceActionType.setSpeechRate:
         return _setSpeechRate(intent);
       case VoiceActionType.setVolume:
@@ -899,5 +914,6 @@ class VoiceControlService {
   static const _helpText =
       'You can say: describe, repeat, pause, resume, start live detection, '
       'stop live detection, status, talk faster, talk slower, louder, quieter, '
-      'reset speech, local mode, cloud mode, vision status, or what failed.';
+      'reset speech, local mode, cloud mode, vision status, what failed, '
+      'or contact caretaker.';
 }
