@@ -44,7 +44,7 @@ void fuseSituations() {
         currentSituation = OBJECT_IMMINENT;
     } else if (minDistance <= OBSTACLE_NEAR_MM) {
         currentSituation = OBJECT_NEAR;
-    } else if (minDistance <= 1000) {  // Far obstacle threshold
+    } else if (minDistance <= OBSTACLE_FAR_MM) {
         currentSituation = OBJECT_FAR;
     } else {
         currentSituation = NONE;

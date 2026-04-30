@@ -64,7 +64,7 @@
 
 // === 8x8 MATRIX SENSOR CONFIGURATION ===
 #define MATRIX_SENSOR_MAX_DISTANCE_MM 1500  // mm - ignore far readings beyond useful range
-#define MATRIX_SENSOR_ZONE_THRESHOLD_MM 1000 // mm - use this for far obstacle classification
+#define MATRIX_SENSOR_ZONE_THRESHOLD_MM 1500 // mm - use this for far obstacle classification
 #define MATRIX_SENSOR_INIT_RETRY_DELAY_MS 200 // keep failed recovery attempts responsive
 
 // === FALL DETECTION PARAMETERS ===
@@ -78,7 +78,7 @@
 #define FALL_FLAG_HOLD_MS 2000           // ms - keep BLE fall flag high after detection
 
 // === OBSTACLE DETECTION THRESHOLDS ===
-#define OBSTACLE_FAR_MM 1000             // mm - far obstacle detection
+#define OBSTACLE_FAR_MM 1500             // mm - far obstacle detection
 #define OBSTACLE_NEAR_MM 500             // mm - near obstacle warning
 #define OBSTACLE_IMMINENT_MM 200         // mm - imminent collision alert
 

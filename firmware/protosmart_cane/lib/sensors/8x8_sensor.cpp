@@ -24,8 +24,8 @@ static uint16_t matrixSensorBuffer[64];
 #define NEAR_ENTER_MM 450         // Enter NEAR zone
 #define NEAR_EXIT_MM 550          // Exit NEAR zone (hysteresis = 100mm)
 
-#define FAR_ENTER_MM 950          // Enter FAR zone
-#define FAR_EXIT_MM 1050          // Exit FAR zone (hysteresis = 100mm)
+#define FAR_ENTER_MM 1450         // Enter FAR zone
+#define FAR_EXIT_MM 1500          // Exit FAR zone at max feedback range
 
 // === DISTANCE SMOOTHING (exponential moving average) ===
 #define MATRIX_SENSOR_SMOOTH_FACTOR 0.7f  // 0.0-1.0: higher = more aggressive smoothing
