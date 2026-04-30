@@ -379,7 +379,7 @@ class _VisionDiagnosticScreenState extends State<VisionDiagnosticScreen> {
           ] else if (_modelStatus == ModelStatus.notDownloaded) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(
-              'About 500 MB. Wi-Fi recommended.',
+              'About 1.6 GB. Wi-Fi recommended.',
               style: const TextStyle(color: AppColors.textSecondaryOnLight),
             ),
             const SizedBox(height: AppSpacing.xs),

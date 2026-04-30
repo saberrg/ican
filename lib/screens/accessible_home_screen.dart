@@ -838,7 +838,7 @@ class _LocalModelMissingBannerState extends State<_LocalModelMissingBanner> {
         : 'Local vision model not installed';
     final body = downloading
         ? 'Tap to open diagnostics and see progress.'
-        : 'Tap to download (~500 MB, Wi-Fi recommended). Until then, Local mode falls back to a short template description.';
+        : 'Tap to download (~1.6 GB, Wi-Fi recommended). Until then, Local mode falls back to a short template description.';
 
     return Semantics(
       button: true,

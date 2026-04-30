@@ -17,19 +17,19 @@ final class ModelDownloadManager: NSObject {
 
     static let shared = ModelDownloadManager()
 
-    private static let baseURL = "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main"
+    private static let baseURL = "https://huggingface.co/ggml-org/SmolVLM2-2.2B-Instruct-GGUF/resolve/main"
     private static let files: [ModelFile] = [
         ModelFile(
             name: LlamaService.textModelFilename,
             url: "\(baseURL)/\(LlamaService.textModelFilename)",
-            sizeBytes: 436_808_704,
-            sha256: "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"
+            sizeBytes: 1_112_602_656,
+            sha256: "0cf76814555b8665149075b74ab6b5c1d428ea1d3d01c1918c12012e8d7c9f58"
         ),
         ModelFile(
             name: LlamaService.visionProjectorFilename,
             url: "\(baseURL)/\(LlamaService.visionProjectorFilename)",
-            sizeBytes: 108_785_184,
-            sha256: "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b"
+            sizeBytes: 592_523_200,
+            sha256: "ae07ea1facd07dd3230c4483b63e8cda96c6944ad2481f33d531f79e892dd024"
         ),
     ]
 
@@ -74,6 +74,7 @@ final class ModelDownloadManager: NSObject {
                 withIntermediateDirectories: true
             )
             try excludeFromBackup(modelsDir)
+            purgeOrphanModelFiles(in: modelsDir)
             try ensureFreeSpaceForMissingFiles(in: modelsDir)
         } catch {
             finish(success: false, error: error.localizedDescription)
@@ -132,7 +133,7 @@ final class ModelDownloadManager: NSObject {
             "sizeBytes": Int(downloadedBytes),
             "requiredBytes": Int(requiredBytes),
             "path": modelsDir.path,
-            "modelName": "SmolVLM2-500M-Video-Instruct Q8_0",
+            "modelName": "SmolVLM2-2.2B-Instruct Q4_K_M",
             "files": fileStates,
         ]
     }
@@ -400,6 +401,27 @@ final class ModelDownloadManager: NSObject {
         }) {}
 
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Remove `.gguf` files in the models directory that don't match the
+    /// currently-expected set. Prevents previous model downloads (e.g. the
+    /// old 500M files after an upgrade to the 2.2B model) from wasting disk.
+    private func purgeOrphanModelFiles(in modelsDir: URL) {
+        let expected = Set(Self.files.map { $0.name })
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: modelsDir,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        for url in contents {
+            guard url.pathExtension.lowercased() == "gguf" else { continue }
+            if !expected.contains(url.lastPathComponent) {
+                try? FileManager.default.removeItem(at: url)
+                // Clean up the matching .verified sidecar too.
+                let sidecar = url.appendingPathExtension("verified")
+                try? FileManager.default.removeItem(at: sidecar)
+                print("[ModelDownload] Purged orphan model file: \(url.lastPathComponent)")
+            }
+        }
     }
 
     private func excludeFromBackup(_ url: URL) throws {

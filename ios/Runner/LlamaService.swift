@@ -7,7 +7,7 @@ import UIKit
 import llama
 #endif
 
-/// Wraps the llama.cpp mtmd C API for SmolVLM2-500M on-device multimodal inference.
+/// Wraps the llama.cpp mtmd C API for SmolVLM2-2.2B on-device multimodal inference.
 ///
 /// **Setup required before this works:**
 /// 1. Build llama.xcframework: `./scripts/build_llama_ios.sh ~/path/to/llama.cpp`
@@ -18,8 +18,8 @@ final class LlamaService {
 
     static let shared = LlamaService()
 
-    static let textModelFilename       = "SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
-    static let visionProjectorFilename = "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+    static let textModelFilename       = "SmolVLM2-2.2B-Instruct-Q4_K_M.gguf"
+    static let visionProjectorFilename = "mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf"
 
     private var llamaModel: OpaquePointer?
     private var llamaCtx:   OpaquePointer?
@@ -114,7 +114,7 @@ final class LlamaService {
             self.llamaCtx   = ctx
             self.mtmdCtx    = mctx
             self.isLoaded   = true
-            print("[LlamaService] SmolVLM2-500M loaded")
+            print("[LlamaService] SmolVLM2-2.2B loaded")
             return true
         }.value
     }
@@ -618,8 +618,8 @@ final class LlamaService {
 
     static let shared = LlamaService()
 
-    static let textModelFilename       = "SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
-    static let visionProjectorFilename = "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
+    static let textModelFilename       = "SmolVLM2-2.2B-Instruct-Q4_K_M.gguf"
+    static let visionProjectorFilename = "mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf"
 
     private init() {}
 
