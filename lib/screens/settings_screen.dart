@@ -409,6 +409,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+
+        const _Divider(),
+
+        // ── Live mode cloud policy ──
+        _SettingTile(
+          semanticLabel:
+              'Live mode cloud policy. Currently ${s.liveCloudPolicy.label}. '
+              'Local only keeps Live on-device. '
+              'Hybrid on scene change allows up to ten cloud calls per session '
+              'for richer descriptions when the scene changes.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SettingLabel('Live Mode Cloud Calls'),
+              const SizedBox(height: AppSpacing.xs),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<LiveCloudPolicy>(
+                  segments: LiveCloudPolicy.values
+                      .map(
+                        (p) => ButtonSegment<LiveCloudPolicy>(
+                          value: p,
+                          label: Text(
+                            p == LiveCloudPolicy.localOnly ? 'Local' : 'Hybrid',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  selected: {s.liveCloudPolicy},
+                  onSelectionChanged: (sel) {
+                    HapticFeedback.selectionClick();
+                    s.setLiveCloudPolicy(sel.first);
+                  },
+                  style: _segmentedStyle(),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                s.liveCloudPolicy.description,
+                style: TextStyle(
+                  fontSize: 13.sp,
+                  color: AppColors.textSecondaryOnLight,
+                ),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

@@ -30,6 +30,12 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen> {
   // Fall history — persists for the session, never cleared on acknowledge
   final List<_FallRecord> _fallHistory = [];
 
+  // Rolling window of the last _hrWindow BPM samples we believe. The firmware
+  // emits a fresh bpm per beat, but analog PPG is jumpy under motion so we
+  // show the median instead of the latest value to stop the number flickering.
+  static const int _hrWindow = 5;
+  final List<int> _hrBuffer = [];
+
   @override
   void initState() {
     super.initState();
@@ -41,6 +47,12 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen> {
   }
 
   void _onTelemetry(TelemetryPacket pkt) {
+    if (pkt.pulseValid && pkt.pulseBpm > 0) {
+      _hrBuffer.add(pkt.pulseBpm);
+      if (_hrBuffer.length > _hrWindow) {
+        _hrBuffer.removeAt(0);
+      }
+    }
     setState(() => _latest = pkt);
 
     // Rising edge — new fall event
@@ -147,8 +159,17 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen> {
     if (!mounted) return;
     setState(() {
       // Clear stale telemetry when device disconnects so HR shows "--" not old data
-      if (!_caneConnected) _latest = null;
+      if (!_caneConnected) {
+        _latest = null;
+        _hrBuffer.clear();
+      }
     });
+  }
+
+  int? get _smoothedBpm {
+    if (_hrBuffer.isEmpty) return null;
+    final sorted = [..._hrBuffer]..sort();
+    return sorted[sorted.length ~/ 2];
   }
 
   @override
@@ -206,6 +227,8 @@ class _CaretakerDashboardScreenState extends State<CaretakerDashboardScreen> {
               scanning: _caneScanning,
               onScan: () => BleService.instance.startScanForCane(),
             ),
+            const SizedBox(height: 12),
+            _HeartRateCard(bpm: _smoothedBpm),
             const SizedBox(height: 12),
             _FallAlertCard(
               hasFall: hasFall,
@@ -331,6 +354,77 @@ class _ConnectionCard extends StatelessWidget {
               color: ICanTheme.success,
               size: 22,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- Heart Rate ---
+class _HeartRateCard extends StatelessWidget {
+  const _HeartRateCard({required this.bpm});
+
+  final int? bpm;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool hasReading = bpm != null;
+    final int value = bpm ?? 0;
+    final Color color = !hasReading
+        ? ICanTheme.textSecondary
+        : (value < 50 || value > 130)
+        ? ICanTheme.accentOrange
+        : ICanTheme.success;
+
+    return _DashCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.favorite_rounded, color: color, size: 22),
+              const SizedBox(width: 8),
+              const Text(
+                'Heart Rate',
+                style: TextStyle(
+                  color: ICanTheme.textSecondary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                hasReading ? '$value' : '--',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 52,
+                  fontWeight: FontWeight.bold,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  hasReading ? 'BPM' : 'No Signal',
+                  style: const TextStyle(
+                    color: ICanTheme.textSecondary,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Hold still for best reading',
+            style: TextStyle(color: ICanTheme.textSecondary, fontSize: 12),
+          ),
         ],
       ),
     );

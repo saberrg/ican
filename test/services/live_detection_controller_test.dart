@@ -7,6 +7,7 @@ import 'package:ican/services/ble_service.dart';
 import 'package:ican/services/live_detection_controller.dart';
 import 'package:ican/services/on_device_vision_service.dart';
 import 'package:ican/services/tts_service.dart';
+import 'package:ican/services/vertex_ai_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -88,6 +89,59 @@ void main() {
     expect(tts.spoken.last, contains('Text reads Main Street'));
     expect(vision.analyzeSceneCalls, 1);
     expect(vision.analyzeLiveFrameCalls, 0);
+
+    await controller.stop(speak: false);
+    controller.dispose();
+  });
+
+  test('localOnly policy never calls the cloud', () async {
+    final tts = _FakeSpeechOutput();
+    final vision = _FakeOnDeviceVisionService(sceneResult: _stableSceneResult);
+    final cloud = _FakeVertexAiService()..configuredForTest = true;
+    final controller = LiveDetectionController(
+      onDeviceService: vision,
+      cloudService: cloud,
+      ttsService: tts,
+      verbosityProvider: () => LiveDetectionVerbosity.full,
+      cloudPolicyProvider: () => LiveCloudPolicy.localOnly,
+    );
+
+    await controller.start();
+    // Emit enough stable frames to exceed Tier 1 hold + Tier 2 hold.
+    for (var i = 0; i < 30; i++) {
+      BleService.instance.emitEyeImageForTesting(_validJpeg());
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+
+    expect(cloud.streamCalls, 0);
+    expect(controller.cloudCallsUsed, 0);
+
+    await controller.stop(speak: false);
+    controller.dispose();
+  });
+
+  test('cloud call counter increments on hybrid policy', () async {
+    final tts = _FakeSpeechOutput();
+    final vision = _FakeOnDeviceVisionService(sceneResult: _stableSceneResult);
+    final cloud = _FakeVertexAiService()
+      ..configuredForTest = true
+      ..responseChunks = [
+        ['Cloud tier 2.'],
+        ['Cloud tier 3.'],
+      ];
+    final controller = LiveDetectionController(
+      onDeviceService: vision,
+      cloudService: cloud,
+      ttsService: tts,
+      verbosityProvider: () => LiveDetectionVerbosity.full,
+      cloudPolicyProvider: () => LiveCloudPolicy.hybridOnSceneChange,
+    );
+
+    expect(controller.cloudCallsMax, 10);
+    expect(controller.cloudCallsUsed, 0);
+
+    await controller.start();
+    expect(controller.cloudCallsUsed, 0);
 
     await controller.stop(speak: false);
     controller.dispose();
@@ -183,4 +237,59 @@ Uint8List _validJpeg() {
   bytes[1198] = 0xff;
   bytes[1199] = 0xd9;
   return bytes;
+}
+
+const _stableSceneResult = ScenePerceptionResult(
+  ocrTexts: [],
+  sceneClassification: 'hallway',
+  sceneConfidence: 0.85,
+  personCount: 0,
+  personRects: [],
+  detectedObjects: [
+    SpatialObjectData(
+      label: 'chair',
+      confidence: 0.9,
+      clockPosition: 12,
+      relativeDepth: 0.3,
+      centerX: 0.5,
+      centerY: 0.5,
+    ),
+    SpatialObjectData(
+      label: 'table',
+      confidence: 0.7,
+      clockPosition: 1,
+      relativeDepth: 0.5,
+      centerX: 0.6,
+      centerY: 0.5,
+    ),
+  ],
+  hasDepthMap: true,
+);
+
+class _FakeVertexAiService extends VertexAiService {
+  int streamCalls = 0;
+  bool configuredForTest = true;
+  List<List<String>> responseChunks = const [
+    ['Cloud chunk.'],
+  ];
+
+  @override
+  bool get isConfigured => configuredForTest;
+
+  @override
+  Stream<String> streamContentFromImage(
+    Uint8List imageBytes, {
+    required String systemPrompt,
+    String userPrompt = 'Describe what you see.',
+    int maxOutputTokens = 500,
+  }) async* {
+    streamCalls++;
+    final idx = streamCalls - 1;
+    final chunks = idx < responseChunks.length
+        ? responseChunks[idx]
+        : responseChunks.last;
+    for (final chunk in chunks) {
+      yield chunk;
+    }
+  }
 }

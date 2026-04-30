@@ -18,7 +18,7 @@
 // =========================================================================
 
 const CameraProfile profiles[] = {
-    {"FAST",     FRAMESIZE_VGA,   12}, // 0: 640x480   ~8-15 KB
+    {"FAST",     FRAMESIZE_VGA,   13}, // 0: 640x480   ~10-18 KB
     {"BALANCED", FRAMESIZE_SVGA,  10}, // 1: 800x600   ~20-40 KB
     {"QUALITY",  FRAMESIZE_XGA,    8}, // 2: 1024x768  ~40-70 KB
     {"MAX",      FRAMESIZE_UXGA,   8}, // 3: 1600x1200 ~80-150 KB
@@ -38,12 +38,12 @@ static void applyProfileSensorTuning(sensor_t *s, int idx) {
   if (idx == 0) {
     // FAST is safety/live/recovery: favor a brighter, stable image that still
     // transfers quickly over BLE.
-    s->set_brightness(s, 1);
+    s->set_brightness(s, 2);
     s->set_contrast(s, 1);
     s->set_saturation(s, 0);
     s->set_sharpness(s, 1);
     s->set_denoise(s, 1);
-    s->set_ae_level(s, 1);
+    s->set_ae_level(s, 2);
     s->set_gainceiling(s, GAINCEILING_8X);
   } else {
     // BALANCED/diagnostic profiles are text-friendly: sharper edges, less

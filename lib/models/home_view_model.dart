@@ -57,7 +57,9 @@ class HomeViewModel extends ChangeNotifier {
            LiveDetectionController(
              ttsService: ttsService,
              cloudService: sceneService.cloudService,
+             sceneDescriptionService: sceneService,
              verbosityProvider: () => settingsProvider.liveDetectionVerbosity,
+             cloudPolicyProvider: () => settingsProvider.liveCloudPolicy,
            ),
        _traceStore = traceStore ?? DescribeAttemptTraceStore(),
        _processingTimeoutDuration = processingTimeout {
@@ -96,6 +98,8 @@ class HomeViewModel extends ChangeNotifier {
   // ── Live vision mode state ──
   bool get liveVisionActive => _liveController.active;
   Stream<Uint8List> get activeFrameStream => _liveController.activeFrameStream;
+  int get liveCloudCallsUsed => _liveController.cloudCallsUsed;
+  int get liveCloudCallsMax => _liveController.cloudCallsMax;
   final OnDeviceVisionService _onDeviceVision = OnDeviceVisionService();
   OfflineVisionStatus? _offlineVisionStatus;
   VisionRuntimeStatus? _visionRuntimeStatus;

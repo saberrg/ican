@@ -79,6 +79,22 @@ void main() {
       expect(onDevice.analyzeWithVisionCalls, 0);
     });
 
+    test('accepts 2-sentence SmolVLM output once substantial', () async {
+      onDevice.foundationModelsAvailable = false;
+      onDevice.smolReadinessPassed = true;
+      // 2 sentences, 19 words — would have been rejected by the prior
+      // 3-sentence/24-word gate but is now accepted.
+      onDevice.vlmOutput =
+          'A quiet hallway continues ahead with a person standing at '
+          '12 o\'clock. A wooden chair sits at 2 o\'clock within reach.';
+
+      final result = await service.describeOffline(_jpegBytes);
+
+      expect(result.backend, VisionBackend.vlm);
+      expect(result.text, contains('quiet hallway'));
+      expect(_sentenceCount(result.text), 2);
+    });
+
     test('skips SmolVLM when model files exist but probe failed', () async {
       onDevice.modelStatus = ModelStatus.ready;
       onDevice.smolReadinessPassed = false;
@@ -166,7 +182,9 @@ void main() {
         expect(result.backend, VisionBackend.visionOnly);
         expect(result.text, contains('hallway setting'));
         expect(_sentenceCount(result.text), greaterThanOrEqualTo(3));
-        expect(onDevice.analyzeSceneCalls, 1);
+        // Two analyzeScene calls: one for initial perception (fails → falls to
+        // analyzeWithVision), one for the rich-template second chance.
+        expect(onDevice.analyzeSceneCalls, 2);
         expect(onDevice.analyzeWithVisionCalls, 1);
       },
     );

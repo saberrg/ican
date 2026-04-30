@@ -41,6 +41,21 @@ enum LiveDetectionVerbosity {
   final String description;
 }
 
+/// Governs whether Live mode is allowed to call the cloud (Gemini) for richer
+/// tier-2/tier-3 descriptions. A hard per-session cap and a min-interval gate
+/// are enforced by LiveDetectionController regardless of this setting.
+enum LiveCloudPolicy {
+  localOnly('Local only', 'No cloud calls during Live mode'),
+  hybridOnSceneChange(
+    'Hybrid (cloud on scene change)',
+    'Cloud Tier 2/3 allowed, capped per session',
+  );
+
+  const LiveCloudPolicy(this.label, this.description);
+  final String label;
+  final String description;
+}
+
 enum VisionControlMode {
   cloud('Cloud'),
   local('Local'),
@@ -183,9 +198,11 @@ class SettingsProvider extends ChangeNotifier {
   // ── Live Detection ──
   LiveDetectionVerbosity _liveDetectionVerbosity = LiveDetectionVerbosity.full;
   VisionControlMode _visionControlMode = VisionControlMode.cloud;
+  LiveCloudPolicy _liveCloudPolicy = LiveCloudPolicy.hybridOnSceneChange;
 
   LiveDetectionVerbosity get liveDetectionVerbosity => _liveDetectionVerbosity;
   VisionControlMode get visionControlMode => _visionControlMode;
+  LiveCloudPolicy get liveCloudPolicy => _liveCloudPolicy;
 
   void setLiveDetectionVerbosity(LiveDetectionVerbosity v) {
     _liveDetectionVerbosity = v;
@@ -198,6 +215,13 @@ class SettingsProvider extends ChangeNotifier {
     _visionControlMode = mode;
     _save('vision_control_mode', mode.name);
     _recordChange('Mode changed to ${mode.label}');
+    notifyListeners();
+  }
+
+  void setLiveCloudPolicy(LiveCloudPolicy policy) {
+    _liveCloudPolicy = policy;
+    _save('live_cloud_policy', policy.name);
+    _recordChange('Live cloud policy changed to ${policy.label}');
     notifyListeners();
   }
 
@@ -290,6 +314,14 @@ class SettingsProvider extends ChangeNotifier {
         _visionControlMode = VisionControlMode.values.firstWhere(
           (mode) => mode.name == modeName,
           orElse: () => VisionControlMode.cloud,
+        );
+      }
+
+      final policyName = prefs.getString('live_cloud_policy');
+      if (policyName != null) {
+        _liveCloudPolicy = LiveCloudPolicy.values.firstWhere(
+          (policy) => policy.name == policyName,
+          orElse: () => LiveCloudPolicy.hybridOnSceneChange,
         );
       }
 

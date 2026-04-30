@@ -1178,14 +1178,56 @@ class _LivePreviewState extends State<_LivePreview> {
                   ),
                 )
               : ExcludeSemantics(
-                  child: Image.memory(
-                    bytes,
-                    gaplessPlayback: true,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: 160,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.memory(
+                        bytes,
+                        gaplessPlayback: true,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: 160,
+                      ),
+                      const Positioned(
+                        top: 8,
+                        right: 8,
+                        child: _LiveCloudBudgetChip(),
+                      ),
+                    ],
                   ),
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tiny overlay that surfaces the Live-mode cloud-call budget. Hidden when
+/// the user has picked localOnly — no need to display a counter for a feature
+/// that won't fire. Updates as the HomeViewModel notifies listeners (the
+/// controller forwards its notifications through `_liveController`).
+class _LiveCloudBudgetChip extends StatelessWidget {
+  const _LiveCloudBudgetChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<HomeViewModel>();
+    final settings = context.watch<SettingsProvider>();
+    if (settings.liveCloudPolicy == LiveCloudPolicy.localOnly) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(166),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(
+        'Cloud ${vm.liveCloudCallsUsed}/${vm.liveCloudCallsMax}',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 12.sp,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );

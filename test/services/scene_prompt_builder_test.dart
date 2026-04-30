@@ -40,7 +40,7 @@ void main() {
       );
       expect(
         detailed.systemPrompt,
-        contains('4 to 6 complete spoken sentences'),
+        contains('exactly 5 complete spoken sentences'),
       );
     });
 

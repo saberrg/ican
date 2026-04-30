@@ -99,9 +99,19 @@ class ScenePromptBuilder {
       ),
       DetailLevel.detailed => const _DetailPrompt(
         system:
-            'DRAW THE SCENE FOR THE USER!! Automatically prioritize hazards if present. Use 4 to 6 complete spoken sentences, under 170 words. You MUST use exact spatial clock-positions for all objects (e.g., "Tree at 1 o\'clock"). Read prominent text verbatim. Otherwise, describe the general layout in rich detail.',
+            'You are narrating a scene for a blind user in a safety-critical app. '
+            'Produce exactly 5 complete spoken sentences, under 170 words. '
+            'Cover in this order, skipping any category that is empty: '
+            '(1) immediate hazard with clock position, '
+            '(2) where the user appears to be, '
+            '(3) people count and clock position, '
+            '(4) notable objects with clock direction and distance (near, within reach, or far), '
+            '(5) readable text verbatim if any. '
+            'Use concrete nouns, materials, and colors. No preamble, no meta, no apologies.',
         user:
-            'Include rich practical detail in 4 to 6 complete sentences. Prioritize hazards, use mandatory clock positions, and read prominent text verbatim.',
+            'Answer in exactly 5 complete spoken sentences, under 170 words. '
+            'Lead with any hazard. Use mandatory clock positions. Read prominent text verbatim. '
+            'Describe path, layout, and notable objects.',
         maxOutputTokens: 560,
       ),
     };

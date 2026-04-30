@@ -9,6 +9,7 @@ import '../models/settings_provider.dart';
 import 'ble_service.dart';
 import 'livex_stream_service.dart';
 import 'on_device_vision_service.dart';
+import 'scene_description_service.dart';
 import 'tts_service.dart';
 import 'udp_frame_service.dart';
 import 'vertex_ai_service.dart';
@@ -30,22 +31,43 @@ class LiveDetectionController extends ChangeNotifier {
     BleService? bleService,
     OnDeviceVisionService? onDeviceService,
     VertexAiService? cloudService,
+    SceneDescriptionService? sceneDescriptionService,
     SpeechOutput? ttsService,
     ValueGetter<LiveDetectionVerbosity>? verbosityProvider,
+    ValueGetter<LiveCloudPolicy>? cloudPolicyProvider,
     this.intervalMs = 900,
   }) : _ble = bleService ?? BleService.instance,
        _vision = onDeviceService ?? OnDeviceVisionService(),
        _cloud = cloudService,
+       _sceneDescription = sceneDescriptionService,
        _tts = ttsService ?? TtsService.instance,
        _verbosityProvider =
-           verbosityProvider ?? (() => LiveDetectionVerbosity.full);
+           verbosityProvider ?? (() => LiveDetectionVerbosity.full),
+       _cloudPolicyProvider =
+           cloudPolicyProvider ?? (() => LiveCloudPolicy.hybridOnSceneChange);
 
   final BleService _ble;
   final OnDeviceVisionService _vision;
   final VertexAiService? _cloud;
+  final SceneDescriptionService? _sceneDescription;
   final SpeechOutput _tts;
   final ValueGetter<LiveDetectionVerbosity> _verbosityProvider;
+  final ValueGetter<LiveCloudPolicy> _cloudPolicyProvider;
   final int intervalMs;
+
+  // --- Cloud-cost gating --------------------------------------------------
+  // Hard ceiling for cloud (Gemini) calls per Live session. Once hit, Tier 2/3
+  // are disabled for the rest of the session and only local Tier 1 callouts
+  // fire. Users can also pick [LiveCloudPolicy.localOnly] to skip cloud entirely.
+  static const int _maxCloudCallsPerSession = 10;
+  static const Duration _minCloudInterval = Duration(seconds: 15);
+
+  int _cloudCallsThisSession = 0;
+  DateTime _lastCloudCallAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  int get cloudCallsUsed => _cloudCallsThisSession;
+  int get cloudCallsMax => _maxCloudCallsPerSession;
+  LiveCloudPolicy get cloudPolicy => _cloudPolicyProvider();
 
   StreamSubscription<Uint8List>? _imageSub;
   StreamSubscription<BleConnectionEvent>? _connectionSub;
@@ -136,6 +158,8 @@ class LiveDetectionController extends ChangeNotifier {
     _preferFullPerception = true;
     _basicFallbackFramesRemaining = 0;
     _skipUntil = DateTime.fromMillisecondsSinceEpoch(0);
+    _cloudCallsThisSession = 0;
+    _lastCloudCallAt = DateTime.fromMillisecondsSinceEpoch(0);
     _resetLadder();
 
     // Subscribe to activeFrameStream — not _ble.imageStream — so analysis sees
@@ -172,6 +196,8 @@ class LiveDetectionController extends ChangeNotifier {
     await _connectionSub?.cancel();
     _imageSub = null;
     _connectionSub = null;
+    // Kill any in-flight VLM call so the native model can be torn down safely.
+    _sceneDescription?.cancelActiveLocalGeneration();
     try {
       await LiveXStreamService.instance.stopStream();
       await _ble.stopLiveCapture();
@@ -352,6 +378,16 @@ class LiveDetectionController extends ChangeNotifier {
       _tier = _DiscoveryTier.exhausted;
       return;
     }
+    // Cap + policy gate. Policy=localOnly or hard cap → skip cloud entirely;
+    // min-interval → silently defer (tier stays, next frame re-evaluates).
+    if (_cloudPolicyProvider() == LiveCloudPolicy.localOnly ||
+        _cloudCallsThisSession >= _maxCloudCallsPerSession) {
+      _tier = _DiscoveryTier.exhausted;
+      return;
+    }
+    if (DateTime.now().difference(_lastCloudCallAt) < _minCloudInterval) {
+      return;
+    }
 
     final crop = _centerCropJpeg(jpeg, cropFraction: 0.60, maxDim: 512);
     if (crop == null) return;
@@ -384,6 +420,14 @@ class LiveDetectionController extends ChangeNotifier {
     final cloud = _cloud;
     if (cloud == null || !cloud.isConfigured) {
       _tier = _DiscoveryTier.exhausted;
+      return;
+    }
+    if (_cloudPolicyProvider() == LiveCloudPolicy.localOnly ||
+        _cloudCallsThisSession >= _maxCloudCallsPerSession) {
+      _tier = _DiscoveryTier.exhausted;
+      return;
+    }
+    if (DateTime.now().difference(_lastCloudCallAt) < _minCloudInterval) {
       return;
     }
 
@@ -423,6 +467,11 @@ class LiveDetectionController extends ChangeNotifier {
     required String userPrompt,
     required int maxTokens,
   }) async {
+    // Stamp attempt time immediately so the min-interval gate covers failures
+    // too (otherwise a flapping network could fire cloud calls every second).
+    _lastCloudCallAt = DateTime.now();
+    _cloudCallsThisSession++;
+    notifyListeners();
     try {
       await cloud.setModel(AiModel.flash);
       const systemPrompt =

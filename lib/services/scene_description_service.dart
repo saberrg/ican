@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/settings_provider.dart';
 import 'app_log_service.dart';
 import 'connectivity_service.dart';
 import 'on_device_vision_service.dart';
@@ -131,6 +132,11 @@ class SceneDescriptionService extends ChangeNotifier {
   final OnDeviceVisionService onDeviceService;
   final ConnectivityService _connectivity;
 
+  /// Serializes local VLM calls so two describe requests can never overlap —
+  /// overlapping calls race with the native model lifecycle and have caused
+  /// crashes when Live mode stopped mid-inference.
+  final _VlmSingleFlight _vlmLock = _VlmSingleFlight();
+
   static const String _prefsKey = 'vision_mode';
 
   VisionMode _mode = VisionMode.auto;
@@ -250,7 +256,13 @@ class SceneDescriptionService extends ChangeNotifier {
       throw SceneDescriptionException.localVision(e);
     }
 
-    final prompt = const ScenePromptBuilder().build(promptContext);
+    // Offline always uses the detailed prompt — brief produces output too short
+    // for the local model to be worth running.
+    final offlineContext = ScenePromptContext(
+      detailLevel: DetailLevel.detailed,
+      hazardSensitivity: promptContext.hazardSensitivity,
+    );
+    final prompt = const ScenePromptBuilder().build(offlineContext);
 
     if (await _isFoundationModelsUsable()) {
       final text = await _tryLocalGeneratedText(
@@ -287,10 +299,8 @@ class SceneDescriptionService extends ChangeNotifier {
     debugPrint(
       '[SceneDescription] Offline generative backends unavailable; using template',
     );
-    return _offlineResult(
-      _templateDescriptionFor(perception),
-      VisionBackend.visionOnly,
-    );
+    final templated = await _templateDescriptionFor(perception, imageBytes);
+    return _offlineResult(templated, VisionBackend.visionOnly);
   }
 
   Future<SceneDescriptionResult> _describeAutoForCompatibility(
@@ -405,18 +415,33 @@ class SceneDescriptionService extends ChangeNotifier {
   Future<VisionAnalysis> _analyzeOfflinePerception(Uint8List imageBytes) async {
     try {
       return await onDeviceService.analyzeScene(imageBytes);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint(
-        '[SceneDescription] Full offline perception unavailable; '
-        'using Apple Vision basics: $e',
+        '[SceneDescription] Full offline perception unavailable '
+        '(${e.runtimeType}); using Apple Vision basics: $e\n$st',
       );
       return onDeviceService.analyzeWithVision(imageBytes);
     }
   }
 
-  String _templateDescriptionFor(VisionAnalysis perception) {
+  /// Returns the best template description available. If the perception we have
+  /// is only the basic Apple Vision path, gives the rich YOLO+depth path one
+  /// more chance before committing to the sparse template.
+  Future<String> _templateDescriptionFor(
+    VisionAnalysis perception,
+    Uint8List imageBytes,
+  ) async {
     if (perception is ScenePerceptionResult) {
       return perception.toTemplateDescription();
+    }
+    try {
+      final richer = await onDeviceService.analyzeScene(imageBytes);
+      return richer.toTemplateDescription();
+    } catch (e) {
+      debugPrint(
+        '[SceneDescription] Rich-template second chance failed '
+        '(${e.runtimeType}); falling back to Apple Vision template: $e',
+      );
     }
     return perception.toTemplateDescription();
   }
@@ -439,19 +464,27 @@ class SceneDescriptionService extends ChangeNotifier {
     Uint8List imageBytes,
     VisionAnalysis perception, {
     required String systemPrompt,
-  }) async {
+  }) {
     final context = perception.toPromptContext();
     final enhancedPrompt = context.isNotEmpty
         ? '$systemPrompt\n\nUse the sensor context below for hazards, clock positions, depth, people, and visible text. Do not ignore it. Produce the full requested 3 to 5 sentence answer.\n\n$context'
         : systemPrompt;
-    return _collectLocalTokenStream(
-      onDeviceService.describeWithVlm(
-        imageBytes,
-        systemPrompt: enhancedPrompt,
-        visionContext: context.isEmpty ? null : context,
+    return _vlmLock.run(
+      () => _collectLocalTokenStream(
+        onDeviceService.describeWithVlm(
+          imageBytes,
+          systemPrompt: enhancedPrompt,
+          visionContext: context.isEmpty ? null : context,
+        ),
+        label: 'SmolVLM2',
       ),
-      label: 'SmolVLM2',
     );
+  }
+
+  /// Cancel any in-flight local VLM generation. Used by Live mode on stop to
+  /// avoid the native model being torn down while inference is mid-stream.
+  void cancelActiveLocalGeneration() {
+    _vlmLock.cancel();
   }
 
   Future<String> _collectLocalTokenStream(
@@ -522,7 +555,9 @@ class SceneDescriptionService extends ChangeNotifier {
     final sentences = RegExp(
       r'''[^.!?]+[.!?]+["')\]]*(?=\s|$)''',
     ).allMatches(normalized).length;
-    return sentences >= 3 && words >= 24;
+    // Accept 2 solid sentences with enough content — the prior 3-sentence gate
+    // was rejecting SmolVLM2 output that typically lands at 2-3 sentences.
+    return sentences >= 2 && words >= 16;
   }
 
   // Single-backend entry points for diagnostics.
@@ -1103,4 +1138,52 @@ class _CloudRescueResult {
 
   final String text;
   final String strategy;
+}
+
+/// Queues local VLM calls so only one runs at a time. When [cancel] is called
+/// while a job is active, the in-flight future completes with an empty string
+/// and the next queued caller proceeds. This guards the native model lifecycle
+/// — overlapping native calls have been observed to crash the app.
+class _VlmSingleFlight {
+  Future<String>? _active;
+  Completer<String>? _activeCompleter;
+
+  Future<String> run(Future<String> Function() job) async {
+    // Wait for any prior call to finish before starting a new one.
+    final prior = _active;
+    if (prior != null) {
+      try {
+        await prior;
+      } catch (_) {
+        // Previous caller's error is not ours to surface.
+      }
+    }
+
+    final completer = Completer<String>();
+    _activeCompleter = completer;
+    _active = completer.future;
+
+    try {
+      final result = await job();
+      if (!completer.isCompleted) completer.complete(result);
+    } catch (e, st) {
+      if (!completer.isCompleted) completer.completeError(e, st);
+    } finally {
+      if (identical(_activeCompleter, completer)) {
+        _activeCompleter = null;
+        _active = null;
+      }
+    }
+    return completer.future;
+  }
+
+  /// Force the currently in-flight job to resolve with an empty string.
+  void cancel() {
+    final completer = _activeCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete('');
+    }
+    _activeCompleter = null;
+    _active = null;
+  }
 }
