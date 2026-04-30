@@ -124,7 +124,6 @@ ensure_cmake() {
 
   ensure_command cmake
 }
-`n
 if [[ "$(uname -s)" != "Darwin" ]]; then
   fail "This script must run on macOS"
 fi
