@@ -1,9 +1,13 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+
 import 'dart:io' show Platform;
+
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:win_ble/win_ble.dart';
 import 'package:win_ble/win_file.dart' show WinServer;
+
 import '../protocol/ble_protocol.dart';
 import '../protocol/eye_capture_diagnostics.dart';
 import 'device_prefs_service.dart';

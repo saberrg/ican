@@ -174,15 +174,12 @@ class TtsService extends ChangeNotifier
       );
       await _tryNativeSetup(
         'set iOS audio category',
-        () => _flutterTts.setIosAudioCategory(
-          IosTextToSpeechAudioCategory.playback,
-          [
-            IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-            IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-          ],
-          IosTextToSpeechAudioMode.defaultMode,
-        ),
+        () => _flutterTts
+            .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+              IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+              IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+              IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+            ], IosTextToSpeechAudioMode.defaultMode),
       );
     }
 
@@ -343,15 +340,12 @@ class TtsService extends ChangeNotifier
       );
       await _tryNativeSetup(
         'reset iOS audio category',
-        () => _flutterTts.setIosAudioCategory(
-          IosTextToSpeechAudioCategory.playback,
-          [
-            IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-            IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-          ],
-          IosTextToSpeechAudioMode.defaultMode,
-        ),
+        () => _flutterTts
+            .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+              IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+              IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+              IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+            ], IosTextToSpeechAudioMode.defaultMode),
       );
     }
     notifyListeners();
