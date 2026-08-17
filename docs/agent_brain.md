@@ -83,7 +83,7 @@ This is the main demo path. Everything else is secondary.
 ## Current Project State
 
 Repo:
-- `C:\Users\17733\ican`
+- Repository root
 
 Important docs:
 - `docs/demo_execution_control.md`
@@ -148,13 +148,8 @@ After Codex restart, use:
 - Context7 for current library/framework docs.
 - Web search for fast-moving Apple/Core ML/local-model research, using primary sources when possible.
 
-Custom local skills exist under:
-- `C:\Users\17733\.codex\skills\ican-demo-pm`
-- `C:\Users\17733\.codex\skills\ican-eye-ble`
-- `C:\Users\17733\.codex\skills\ican-flutter-tdd`
-- `C:\Users\17733\.codex\skills\ican-prompt-eval`
-- `C:\Users\17733\.codex\skills\ican-ui-wow`
-- `C:\Users\17733\.codex\skills\ican-voice-control-plane`
+Custom local skills may be installed outside the repository. Do not record
+workstation paths in tracked documentation.
 
 The skill files were fixed to use valid frontmatter and UTF-8 without BOM.
 
@@ -303,11 +298,11 @@ Use this prompt when starting a new Codex session:
 You are taking over the iCan project as program manager and senior developer.
 
 Read first:
-- C:\Users\17733\ican\docs\agent_brain.md
-- C:\Users\17733\ican\docs\demo_execution_control.md
+- docs\agent_brain.md
+- docs\demo_execution_control.md
 
 Repo:
-- C:\Users\17733\ican
+- Repository root
 
 My standards:
 - Be direct.

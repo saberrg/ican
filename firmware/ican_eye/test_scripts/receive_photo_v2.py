@@ -17,7 +17,7 @@ Usage:
     python receive_photo_v2.py
     python receive_photo_v2.py --profile 2              # start with QUALITY profile
     python receive_photo_v2.py --profile 3 --once       # single MAX capture then exit
-    python receive_photo_v2.py --address 90:70:69:12:53:BD  # connect directly by MAC
+    python receive_photo_v2.py --address AA:BB:CC:DD:EE:FF  # connect directly by MAC
 """
 
 import asyncio
@@ -225,7 +225,7 @@ async def main():
     parser.add_argument("--once", action="store_true",
                         help="Take one photo and exit (no interactive menu)")
     parser.add_argument("--address", type=str, default=None,
-                        help="Connect directly by MAC address e.g. 90:70:69:12:53:BD (bypasses name scan)")
+                        help="Connect directly by MAC address e.g. AA:BB:CC:DD:EE:FF (bypasses name scan)")
     args = parser.parse_args()
 
     print("=" * 55)
@@ -263,7 +263,7 @@ async def main():
         print("  Troubleshooting tips:")
         print("  1. Check Serial Monitor — does it show '[BLE] Advertising as XIAO_Camera'?")
         print("  2. Toggle Bluetooth OFF then ON in Windows settings")
-        print("  3. Connect directly by MAC:  python receive_photo_v2.py --address 90:70:69:12:53:BD")
+        print("  3. Connect directly by MAC:  python receive_photo_v2.py --address AA:BB:CC:DD:EE:FF")
         print("  4. Try the v1 receiver:      python receive_photo.py")
         return
 

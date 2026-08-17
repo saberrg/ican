@@ -217,9 +217,12 @@ class BleService extends ChangeNotifier {
 
   bool get _legacyImageAssemblerEnabled => false;
 
-  // Known MAC for the iCan Eye hardware. Used as fallback when no device has
-  // been saved yet, and as the auto-connect target on startup.
-  static const String fallbackEyeDeviceId = '90:70:69:12:53:be';
+  // Optional device identifier for local Windows testing. Keep real hardware
+  // identifiers outside source control and inject them at build time.
+  static const String configuredEyeDeviceId = String.fromEnvironment(
+    'ICAN_EYE_DEVICE_ID',
+    defaultValue: '',
+  );
 
   // ---------------------------------------------------------------------------
   // Windows BLE state — Eye (win_ble transport)
@@ -289,7 +292,7 @@ class BleService extends ChangeNotifier {
   }
 
   /// Returns true if [id] looks like a colon-separated MAC address
-  /// (e.g. "90:70:69:12:53:be") rather than a CoreBluetooth UUID.
+  /// (e.g. "AA:BB:CC:DD:EE:FF") rather than a CoreBluetooth UUID.
   static bool _isMacAddress(String id) {
     return RegExp(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$').hasMatch(id);
   }
@@ -303,7 +306,7 @@ class BleService extends ChangeNotifier {
       await _winEyeScanSub?.cancel();
 
       final targetSvc = BleServices.eyeServiceUuid.toLowerCase();
-      final targetMac = (_preferredEyeDeviceId ?? fallbackEyeDeviceId)
+      final targetMac = (_preferredEyeDeviceId ?? configuredEyeDeviceId)
           .toLowerCase();
 
       _winEyeScanSub = WinBle.scanStream.listen((device) {
@@ -318,7 +321,7 @@ class BleService extends ChangeNotifier {
         debugPrint('[BLE Eye Win] NEARBY: "$name" [$addr] services:$svcUuids');
 
         final isEyeByService = svcUuids.contains(targetSvc);
-        final isEyeByMac = addr == targetMac;
+        final isEyeByMac = targetMac.isNotEmpty && addr == targetMac;
         final isEyeByName =
             name.toLowerCase().contains('eye') ||
             name.toLowerCase().contains('ican');
@@ -861,7 +864,8 @@ class BleService extends ChangeNotifier {
     if (name.isEmpty) {
       // If name is empty, we must rely on Service UUID (checked elsewhere)
       // or a direct MAC/ID match.
-      return id.toUpperCase() == fallbackEyeDeviceId.toUpperCase() ||
+      final configuredId = configuredEyeDeviceId.toUpperCase();
+      return (configuredId.isNotEmpty && id.toUpperCase() == configuredId) ||
           id.toUpperCase() == _preferredEyeDeviceId?.toUpperCase();
     }
 
@@ -876,7 +880,8 @@ class BleService extends ChangeNotifier {
         normalizedName.contains('xiao') ||
         normalizedName.contains('camera') ||
         (normalizedPreferred != null && normalizedId == normalizedPreferred) ||
-        normalizedId == fallbackEyeDeviceId;
+        (configuredEyeDeviceId.isNotEmpty &&
+            normalizedId == configuredEyeDeviceId.toUpperCase());
   }
 
   bool _isEyeServiceAdvertised(dynamic advertisementData) {

@@ -68,6 +68,8 @@ compile_commands.json
 .env
 secret.json
 .codex/
+.claude/settings.local.json
+AGENT_HANDOFF.md
 *.local.md
 LOCAL_PRIVATE*.md
 work/

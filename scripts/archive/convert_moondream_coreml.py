@@ -13,7 +13,7 @@ Output models:
   moondream_size_decoder.mlpackage  — Detection size decoder (static, iOS 17)
 
 Usage (run with venv active, from ican/ root):
-  PYTHONPATH=/mnt/c/Users/17733/moondream \\
+  PYTHONPATH=/path/to/moondream \\
   .venv-moondream/bin/python scripts/convert_moondream_coreml.py \\
       --output ios/Runner/EyePipeline/Models/Moondream
 

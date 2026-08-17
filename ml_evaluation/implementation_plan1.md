@@ -5,10 +5,10 @@
 The iCan Eye is a wearable camera device (XIAO ESP32-S3 Sense) for visually impaired users. When the user presses a button, it captures an image and describes the scene in natural language via audio. The user wants a **three-layer, adaptable AI inference strategy** so the system works across different connectivity and hardware situations.
 
 The current codebase has:
-- **Firmware**: [main.cpp](file:///c:/Users/17733/ican/firmware/ican_eye/src/main.cpp) — dual-pipeline BLE (instant text placeholder + image stream)
+- **Firmware**: [main.cpp](../firmware/ican_eye/src/main.cpp) — dual-pipeline BLE (instant text placeholder + image stream)
 - **App**: Flutter with BLE, TTS, STT services
-- **ML Playground**: [ml_evaluation/](file:///c:/Users/17733/ican/ml_evaluation) — Ollama-based image description, TFLite MobileNet evaluation scripts
-- **Protocol**: [ble_protocol.yaml](file:///c:/Users/17733/ican/protocol/ble_protocol.yaml) — single source of truth for BLE UUIDs and packet formats
+- **ML Playground**: [ml_evaluation/](../ml_evaluation) — Ollama-based image description, TFLite MobileNet evaluation scripts
+- **Protocol**: [ble_protocol.yaml](../protocol/ble_protocol.yaml) — single source of truth for BLE UUIDs and packet formats
 
 > [!IMPORTANT]
 > This document is an **architecture plan**, not a code implementation plan. No code changes are proposed — the goal is to agree on the right approach before building.
@@ -59,7 +59,7 @@ graph TD
 
 **Why this matters**: Even if the phone is disconnected or the cloud is down, the user gets *something* immediately. A blind user hearing "car" or "person, stairs" within one second has actionable safety information.
 
-**Current state**: The [main.cpp](file:///c:/Users/17733/ican/firmware/ican_eye/src/main.cpp) Pipeline 1 has a placeholder (`"object detected"`) — the actual TFLite Micro inference needs to be integrated.
+**Current state**: The [main.cpp](../firmware/ican_eye/src/main.cpp) Pipeline 1 has a placeholder (`"object detected"`) — the actual TFLite Micro inference needs to be integrated.
 
 ---
 
@@ -78,7 +78,7 @@ graph TD
 
 **Why this matters**: This is the **core experience**. No internet required, no API costs, reasonable latency. The image is already being streamed to the phone via Pipeline 2 (BLE image stream), so this layer simply processes what arrives.
 
-**Current state**: The [describe_images.py](file:///c:/Users/17733/ican/ml_evaluation/describe_images.py) script in `ml_evaluation/` uses Ollama with `llama3.2-vision` / `llava` / `moondream` locally on a PC — this validates the concept but runs on desktop, not on-device mobile. The next step is porting this to run inside the Flutter app using a mobile-optimized runtime.
+**Current state**: The [describe_images.py](describe_images.py) script in `ml_evaluation/` uses Ollama with `llama3.2-vision` / `llava` / `moondream` locally on a PC — this validates the concept but runs on desktop, not on-device mobile. The next step is porting this to run inside the Flutter app using a mobile-optimized runtime.
 
 ---
 
@@ -101,7 +101,7 @@ The user currently has **$45 monthly in Gen AI & Cloud credits** via the Google 
 - The $45/month credit is more than enough to cover thousands of high-quality image descriptions per month during development and early beta testing.
 - The benefits also include "Consultation with Google Cloud experts" (1-to-1 advice), which can be leveraged to optimize the precise prompt engineering and architecture for the Gemini Vision API calls.
 
-**Current state**: Not implemented. The [ml-model-list.md](file:///c:/Users/17733/ican/ml_evaluation/docs/ml-model-list.md) doc mentions "Cloud Based Vision AI APIs" as top tier but has no details yet.
+**Current state**: Not implemented. The [ml-model-list.md](docs/ml-model-list.md) doc mentions "Cloud Based Vision AI APIs" as top tier but has no details yet.
 
 ---
 
@@ -175,7 +175,7 @@ The user should be able to configure their preference in app settings:
 
 ### 3. Self-hosted cloud option (Ollama on a VPS)
 
-Your [describe_images.py](file:///c:/Users/17733/ican/ml_evaluation/describe_images.py) already talks to an Ollama REST API. You could deploy this same setup on a cheap VPS (e.g., $20-40/month GPU instance) and have your app point to it instead of a commercial API. This gives you:
+Your [describe_images.py](describe_images.py) already talks to an Ollama REST API. You could deploy this same setup on a cheap VPS (e.g., $20-40/month GPU instance) and have your app point to it instead of a commercial API. This gives you:
 - **No per-request API costs** (after server cost)
 - **Full control** over the model and prompt
 - **Privacy** — images stay on your server
@@ -212,7 +212,7 @@ The key insight is that **each layer has a different job**: Layer 1 is for insta
 
 ## What's NOT in This Plan
 
-This plan covers the AI inference architecture only. The following are already in progress or covered by the existing [development_plan.md](file:///c:/Users/17733/ican/development_plan.md):
-- BLE image transfer protocol (already implemented in [main.cpp](file:///c:/Users/17733/ican/firmware/ican_eye/src/main.cpp) and [ble_protocol.yaml](file:///c:/Users/17733/ican/protocol/ble_protocol.yaml))
-- TTS integration (already exists in [lib/services/tts_service.dart](file:///c:/Users/17733/ican/lib/services/tts_service.dart))
+This plan covers the AI inference architecture only. The following are already in progress or covered by the existing [development_plan.md](../development_plan.md):
+- BLE image transfer protocol (already implemented in [main.cpp](../firmware/ican_eye/src/main.cpp) and [ble_protocol.yaml](../protocol/ble_protocol.yaml))
+- TTS integration (already exists in [lib/services/tts_service.dart](../lib/services/tts_service.dart))
 - Navigation, haptics, obstacle detection (iCan Cane scope)
