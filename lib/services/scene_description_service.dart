@@ -237,7 +237,7 @@ class SceneDescriptionService extends ChangeNotifier {
     try {
       final nativeReady = await onDeviceService.pingNativeChannel();
       if (!nativeReady) return false;
-      return onDeviceService.isAppleVisionAvailable();
+      return await onDeviceService.isAppleVisionAvailable();
     } catch (e) {
       debugPrint('[SceneDescription] Local health check failed: $e');
       return false;
@@ -421,7 +421,7 @@ class SceneDescriptionService extends ChangeNotifier {
         userPrompt: userPrompt,
         maxOutputTokens: maxOutputTokens,
       );
-      return _finishCloudText(
+      return await _finishCloudText(
         first.text,
         first.finishReason,
         imageBytes: imageBytes,

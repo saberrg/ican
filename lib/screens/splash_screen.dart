@@ -96,10 +96,13 @@ class _SplashScreenState extends State<SplashScreen>
       // so the rest of the app still launches.
     }
     try {
-      final savedEyeMac =
-          await DevicePrefsService.instance.getLastDeviceId() ??
-          BleService.fallbackEyeDeviceId;
-      BleService.instance.connectToEyeByMac(savedEyeMac);
+      final savedEyeId = await DevicePrefsService.instance.getLastDeviceId();
+      final eyeDeviceId = savedEyeId ?? BleService.configuredEyeDeviceId;
+      if (eyeDeviceId.isNotEmpty) {
+        BleService.instance.connectToEyeByMac(eyeDeviceId);
+      } else {
+        await BleService.instance.startScan();
+      }
       BleService.instance.autoConnectToCane();
     } catch (e) {
       debugPrint('[Splash] BLE auto-connect error: $e');
