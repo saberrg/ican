@@ -5,7 +5,7 @@
 
 ## System Overview
 
-The iCan Eye pipeline converts a BLE-streamed JPEG from the ESP32-S3 camera into a spoken, spatially-aware scene description for a blind/visually impaired user. It runs entirely on-device when offline and falls back to Gemini cloud when online.
+The iCan Eye implementation is designed to convert a Bluetooth streamed JPEG from the ESP32 S3 camera into a spoken scene description for a blind or visually impaired user. Gemini cloud is the strongest demonstrated vision path. Local execution paths are implemented, but availability depends on the bundled models, native runtime health, and physical device verification.
 
 ```
 iCan Eye (ESP32-S3)  ──BLE──►  Flutter App  ──►  Spoken description (TTS)
@@ -31,7 +31,7 @@ JPEG bytes (from BLE)
 │                                            │
 │  • Depth Anything V2 Small (CoreML)        │
 │    - Apple-provided .mlpackage (~19 MB)    │
-│    - 26 ms on iPhone 16 Pro                │
+│    - Device measurement not recorded here  │
 │    - Full monocular depth map              │
 │                                            │
 │  • YOLOv3 Tiny (CoreML)                   │
@@ -221,14 +221,9 @@ Be specific and spatial. Never say "I see" — describe as if you are the person
 
 ---
 
-## Apple CoreML Models Available (from developer.apple.com/machine-learning/models/)
+## Apple CoreML Models Considered
 
-| Model | Size | Latency (iPhone 16 Pro) | Role in iCan |
-|---|---|---|---|
-| Depth Anything V2 Small F16P6 | 19 MB | 26–34 ms | Object distance tiers |
-| YOLOv3 Tiny Int8 | 35.4 MB | Real-time | Object labels + positions |
-| DETR ResNet50 FP8 | 43.1 MB | — | Future: rich segmentation |
-| DeepLabv3 Int8 | 2.3 MB | — | Future: floor/wall/obstacle masks |
+The design considers Depth Anything V2 Small, YOLOv3 Tiny, DETR ResNet50, and DeepLabv3 for local perception. The repository does not contain a checked in device receipt that proves latency or availability for these models inside the iCan application. Treat the model list as planned or optional integration work rather than a project benchmark.
 
 ---
 

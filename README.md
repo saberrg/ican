@@ -58,7 +58,7 @@ Protocol, service, settings, and widget checks are in `test`.
 
 ## Scope and maturity
 
-iCan is an engineering prototype that reached integrated hardware and application testing. Cloud vision is the most reliable demonstration path. Bluetooth camera capture and local vision depend on the connected hardware, iOS version, bundled models, and runtime health checks.
+iCan is an engineering prototype with implemented firmware and application paths, automated component checks, and partial hardware bench testing. Cloud vision is the most reliable demonstration path. A complete iPhone and iCan Eye capture smoke record remains outstanding, and local vision still depends on the iOS version, bundled models, and runtime health checks.
 
 Navigation and some broader cane features remain outside the strongest iCan Eye demonstration path. They are not presented as complete product capabilities here.
 
